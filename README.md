@@ -36,7 +36,9 @@ preserving unrelated localStorage keys.
 
 ## How it works
 
-The page is plain HTML, CSS, and JavaScript, loaded into a small WKWebView container.
+The page is plain HTML, CSS, and JavaScript, loaded into a small WKWebView container
+with a native navigation title and localized Done button. Done saves the latest
+form values before closing; a validation error keeps the page open for correction.
 WebKit handles native keyboard scrolling; the page has one document scroll area
 and no fixed-height chat output. The page communicates with Python using JSON
 messages. Model checks and tests run in background threads, so the install action

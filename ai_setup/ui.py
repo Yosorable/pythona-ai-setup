@@ -4,7 +4,7 @@ import json
 import queue
 import weakref
 
-from rubicon.objc import NSObject, ObjCClass, objc_method
+from rubicon.objc import NSObject, ObjCClass, SEL, objc_method
 from rubicon.objc.runtime import load_library
 
 from .app import SetupApp
@@ -37,6 +37,12 @@ def presenter():
 
 class PageHandler(NSObject, auto_rename=True):
     @objc_method
+    def doneTap(self):
+        host = self.host_ref()
+        if host is not None and not host.app.closed.is_set():
+            host.request_close()
+
+    @objc_method
     def userContentController_didReceiveScriptMessage_(self, controller, message):
         host = self.host_ref()
         if host is not None and not host.app.closed.is_set() and objc_value(message.frameInfo, "isMainFrame"):
@@ -53,24 +59,38 @@ class WebSettings:
     def __init__(self, app):
         self.app = app
         self.requests = queue.Queue()
-        self.controller = self.webview = self.handler = None
+        self.controller = self.navigation = self.webview = self.handler = None
+        self.page_ready = False
 
     def open(self):
         self.controller = ObjCClass("UIViewController").alloc().init()
-        self.controller.modalPresentationStyle = 0  # Full screen; the page owns its header.
+        self.controller.title = "Pythona AI Setup"
         configuration = ObjCClass("WKWebViewConfiguration").alloc().init()
         configuration.websiteDataStore = objc_value(ObjCClass("WKWebsiteDataStore"), "nonPersistentDataStore")
         self.handler = PageHandler.alloc().init()
         self.handler.host_ref = weakref.ref(self)
+        self.controller.navigationItem.rightBarButtonItem = ObjCClass("UIBarButtonItem").alloc().initWithTitle_style_target_action_(
+            self.app.tr("done"), 2, self.handler, SEL("doneTap"))
         configuration.userContentController.addScriptMessageHandler_name_(self.handler, "setup")
         webview = ObjCClass("WKWebView").alloc().initWithFrame_configuration_(self.controller.view.bounds, configuration)
         webview.autoresizingMask = 2 | 16
-        # WebKit handles keyboard scrolling; CSS accounts for the device safe area.
-        webview.scrollView.contentInsetAdjustmentBehavior = 2
+        # UIKit accounts for the navigation bar and safe area; WebKit handles the keyboard.
+        webview.scrollView.contentInsetAdjustmentBehavior = 0
         self.webview = webview
         self.controller.view.addSubview_(webview)
+        self.controller.setContentScrollView_forEdge_(webview.scrollView, 1)
+        self.navigation = ObjCClass("UINavigationController").alloc().initWithRootViewController_(self.controller)
+        self.navigation.modalPresentationStyle = 0
         webview.loadHTMLString_baseURL_(render_page(self.app.tr.language), None)
-        presenter().presentViewController_animated_completion_(self.controller, True, None)
+        presenter().presentViewController_animated_completion_(self.navigation, True, None)
+
+    def request_close(self):
+        if not self.page_ready:
+            self.app.close()
+            return
+        self.controller.view.endEditing_(True)
+        # Read the latest form values, including edits that have not fired change yet.
+        self.webview.evaluateJavaScript_completionHandler_("void window.setupBridge.close()", None)
 
     def process_next(self, timeout=0.1):
         try:
@@ -86,6 +106,8 @@ class WebSettings:
 
         def reply():
             if self.webview is not None:
+                if request.get("action") == "state" and "result" in response:
+                    self.page_ready = True
                 self.webview.evaluateJavaScript_completionHandler_(code, None)
         run_on_ui(reply)
         return True
@@ -95,9 +117,9 @@ class WebSettings:
         if self.webview is not None:
             self.webview.stopLoading()
             self.webview.configuration.userContentController.removeScriptMessageHandlerForName_("setup")
-        if self.controller is not None and self.controller.presentingViewController is not None:
-            self.controller.dismissViewControllerAnimated_completion_(False, None)
-        self.controller = self.webview = self.handler = None
+        if self.navigation is not None and self.navigation.presentingViewController is not None:
+            self.navigation.dismissViewControllerAnimated_completion_(False, None)
+        self.controller = self.navigation = self.webview = self.handler = None
 
 
 def main():

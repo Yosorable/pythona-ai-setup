@@ -57,11 +57,30 @@ final class LocalLLMIntegrationTests: XCTestCase {
             guard opened.succeeded else { await cleanup(engine); return }
             let window = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
                 .flatMap(\.windows).first(where: \.isKeyWindow))
-            var controller = try XCTUnwrap(window.rootViewController)
-            while let next = controller.presentedViewController { controller = next }
+            var presented = try XCTUnwrap(window.rootViewController)
+            while let next = presented.presentedViewController { presented = next }
+            let navigation = try XCTUnwrap(presented as? UINavigationController)
+            let controller = try XCTUnwrap(navigation.topViewController)
+            let done = try XCTUnwrap(controller.navigationItem.rightBarButtonItem)
+            let doneAction = try XCTUnwrap(done.action)
+            XCTAssertEqual(controller.title, "Pythona AI Setup")
+            XCTAssertEqual(done.title, "Done")
             let web = try XCTUnwrap(controller.view.subviews.compactMap { $0 as? WKWebView }.first)
+            func capture(_ name: String) {
+                let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
+                    window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+                }
+                let attachment = XCTAttachment(image: image)
+                attachment.name = name
+                attachment.lifetime = .keepAlways
+                add(attachment)
+            }
             try await wait(web, "document.documentElement.dataset.ready === 'true'")
             try await wait(web, "document.getElementById('availability').dataset.kind === 'unavailable'")
+            controller.view.layoutIfNeeded()
+            XCTAssertGreaterThan(web.scrollView.adjustedContentInset.top, 0)
+            try await Task.sleep(for: .milliseconds(300))
+            capture("Web settings · Native navigation title")
             let filesEnabled = try await web.evaluateJavaScript("document.getElementById('files').checked")
             XCTAssertEqual(filesEnabled as? Bool, true)
             _ = try await web.evaluateJavaScript("document.getElementById('install').click()")
@@ -158,15 +177,15 @@ final class LocalLLMIntegrationTests: XCTestCase {
             _ = try await web.evaluateJavaScript("window.scrollTo(0, document.documentElement.scrollHeight)")
             try await wait(web, "window.scrollY > 0 && document.getElementById('reply').getBoundingClientRect().bottom <= window.visualViewport.height + window.visualViewport.offsetTop")
             try await Task.sleep(for: .milliseconds(150))
-            let image = UIGraphicsImageRenderer(bounds: window.bounds).image { _ in
-                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-            }
-            let attachment = XCTAttachment(image: image)
-            attachment.name = "Web settings · Test conversation"
-            attachment.lifetime = .keepAlways
-            add(attachment)
-            _ = try await web.evaluateJavaScript("document.getElementById('close').click()")
-            for _ in 0..<30 where controller.presentingViewController != nil {
+            capture("Web settings · Test conversation")
+            // Native Done must preserve uncommitted form edits and keep invalid forms open.
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = ''")
+            XCTAssertTrue(UIApplication.shared.sendAction(doneAction, to: done.target, from: done, for: nil))
+            try await wait(web, "!document.getElementById('error').hidden")
+            XCTAssertNotNil(navigation.presentingViewController)
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test Draft'")
+            XCTAssertTrue(UIApplication.shared.sendAction(doneAction, to: done.target, from: done, for: nil))
+            for _ in 0..<30 where navigation.presentingViewController != nil {
                 try await Task.sleep(for: .milliseconds(100))
                 let result = await engine.runCodeForAI(code: """
                 import sys
@@ -176,7 +195,17 @@ final class LocalLLMIntegrationTests: XCTestCase {
                 """)
                 XCTAssertTrue(result.succeeded, result.output)
             }
-            XCTAssertNil(controller.presentingViewController)
+            XCTAssertNil(navigation.presentingViewController)
+            let closed = await engine.runCodeForAI(code: """
+            import sys
+            from ai_setup.settings import SettingsStore
+            state = sys.modules['_local_llm_integration']
+            saved = SettingsStore(state.store.path).value
+            assert saved['name'] == 'Local LLM Test Draft'
+            assert saved['provider_id'] == state.store.value['provider_id']
+            assert state.app.closed.is_set() and state.app.cancelled.is_set()
+            """)
+            XCTAssertTrue(closed.succeeded, closed.output)
         } catch {
             await cleanup(engine)
             throw error

@@ -39,7 +39,13 @@ test('browser page installs and updates with an unavailable model, preserves edi
     await page.locator('#test').click();
     await page.locator('#test').click();
     await page.waitForFunction(() => document.getElementById('test-status').textContent === 'Test cancelled');
-    await page.locator('#close').click();
+    await page.locator('#name').fill('');
+    await page.evaluate(() => window.setupBridge.close());
+    assert.match(await page.locator('#error').innerText(), /Enter a connection name/);
+    assert.equal(await page.locator('#install').isEnabled(), true);
+    await page.locator('#name').fill('Saved when closing');
+    await page.evaluate(() => window.setupBridge.close());
+    assert.equal(await page.locator('#install').isDisabled(), true);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

@@ -85,7 +85,7 @@
     $("test-output").hidden = !state.test.message && !state.test.text;
     $("test-status").textContent = state.test.message;
     $("reply").textContent = state.test.text;
-    for (const id of ["close", "install", "test"]) $(id).disabled = working || state.closed;
+    for (const id of ["install", "test"]) $(id).disabled = working || state.closed;
     if (state.closed) stopped = true;
   }
   function mutate(action, payload) {
@@ -110,7 +110,11 @@
   $("name").addEventListener("change", save);
   $("tools").addEventListener("change", save);
   $("install").addEventListener("click", () => perform("install", formSettings()));
-  $("close").addEventListener("click", () => perform("close", formSettings()));
+  window.setupBridge.close = async () => {
+    await window.setupReady;
+    await writes.catch(() => {});
+    if (state && !stopped) await perform("close", formSettings());
+  };
   $("test").addEventListener("click", () => perform(state.test.running ? "cancel_test" : "test",
     state.test.running ? null : { settings: formSettings(), prompt: $("prompt").value }));
   window.setupReady = call("state").then(render).catch(showError);
