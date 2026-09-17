@@ -13,6 +13,7 @@ import uuid
 SERVICE_NAME = "pythona-local-llm"
 PROTOCOL_VERSION = 3
 MAX_BODY = 4 * 1024 * 1024
+HEARTBEAT_SECONDS = 15
 
 
 class ModelBusyError(RuntimeError):
@@ -327,7 +328,13 @@ class LocalModelService:
 
         async def pump():
             while True:
-                event = await run.events.get()
+                try:
+                    event = await asyncio.wait_for(run.events.get(), timeout=HEARTBEAT_SECONDS)
+                except TimeoutError:
+                    # Keep URLSession alive during downloads, loading, and prefill.
+                    writer.write(b"\n")
+                    await writer.drain()
+                    continue
                 await emit(event)
                 if event["type"] in ("tool_request", "finish", "error"):
                     return event
@@ -341,6 +348,8 @@ class LocalModelService:
             if disconnected in done:
                 return
             if output not in done:
+                output.cancel()
+                await asyncio.gather(output, return_exceptions=True)
                 await emit({"type": "error", "message": "The model request timed out and was cancelled"})
                 return
             event = await output

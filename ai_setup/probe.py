@@ -30,6 +30,8 @@ async def generate_probe(settings, prompt):
         finished = False
         memory = None
         while line := await reader.readline():
+            if not line.strip():
+                continue
             event = json.loads(line)
             if event["type"] == "error":
                 raise RuntimeError(event["message"])

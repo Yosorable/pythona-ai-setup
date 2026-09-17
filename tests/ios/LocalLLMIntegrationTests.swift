@@ -138,6 +138,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             from ai_setup.settings import provider_settings
             state = sys.modules['_local_llm_integration']
             runtime = load_backend()
+            runtime['HEARTBEAT_SECONDS'] = 0.025
             runtime['service_json'](provider_settings(state.store.data['profiles'][0], state.store.service), '/shutdown', method='POST')
             async def schemas():
                 async def unused(name, arguments):
@@ -149,12 +150,14 @@ final class LocalLLMIntegrationTests: XCTestCase {
                     assert isinstance(tool, fm.Tool) and tool.arguments_schema.to_dict()
             asyncio.run(schemas())
             async def backend(request, invoke):
+                await asyncio.sleep(0.08)
                 if not request['tools']:
                     yield {'type': 'text', 'delta': 'Model test received 😀'}
                 else:
                     registered = runtime['native_tools'](fm, request['tools'], invoke)
                     result = await asyncio.to_thread(lambda: asyncio.run(registered[0].call(fm.GeneratedContent({'path': 'demo.py'}))))
                     assert json.loads(result) == {'content': 'print(1)', 'failed': False}
+                    await asyncio.sleep(0.08)
                     yield {'type': 'text', 'delta': 'File read 😀'}
                 yield {'type': 'finish', 'reason': 'stop'}
             settings = provider_settings(state.store.data['profiles'][0], state.store.service)

@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_setup.bundle import backend_bundle, bootstrap_source, build_provider, load_backend
+from ai_setup.probe import generate_probe
 from ai_setup.settings import SettingsStore, defaults, service_defaults, install, provider_settings, STORAGE_KEY, STATE_PATH
 
 
@@ -173,6 +174,7 @@ class BackendTests(unittest.TestCase):
         self.assertTrue(service.closed.wait(2))
 
     def test_timeout_cancels_model_and_request_never_counts_as_idle(self):
+        self.namespace["HEARTBEAT_SECONDS"] = 0.05
         cancelled = threading.Event()
 
         async def backend(request, invoke):
@@ -185,8 +187,48 @@ class BackendTests(unittest.TestCase):
         service = self.start(backend, idle_seconds=0.1, request_seconds=0.4)
         status, body = self.request(service, "/generate", self.payload())
         self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"\n"))
         self.assertIn("timed out", json.loads(body)["message"])
         self.assertTrue(cancelled.wait(1))
+
+    def test_heartbeat_only_connection_disconnect_cancels_model(self):
+        self.namespace["HEARTBEAT_SECONDS"] = 0.02
+        cancelled = threading.Event()
+
+        async def backend(request, invoke):
+            try:
+                await asyncio.sleep(30)
+                yield {"type": "finish", "reason": "stop"}
+            finally:
+                cancelled.set()
+
+        service = self.start(backend)
+        connection = http.client.HTTPConnection("127.0.0.1", service.port, timeout=3)
+        try:
+            connection.request("POST", "/generate", body=json.dumps(self.payload()),
+                               headers={"Authorization": "Bearer " + self.settings["service_token"]})
+            response = connection.getresponse()
+            try:
+                self.assertEqual(response.readline(), b"\n")
+                self.assertFalse(cancelled.is_set())
+            finally:
+                response.close()
+        finally:
+            connection.close()
+        self.assertTrue(cancelled.wait(1))
+
+    def test_setup_probe_ignores_heartbeats_while_loading(self):
+        self.namespace["HEARTBEAT_SECONDS"] = 0.02
+
+        async def backend(request, invoke):
+            await asyncio.sleep(0.12)
+            yield {"type": "text", "delta": "Ready 😀"}
+            yield {"type": "finish", "reason": "stop", "memory": {"active": 100}}
+
+        service = self.start(backend)
+        settings = {**self.settings, "port": service.port}
+        result = asyncio.run(generate_probe(settings, "Hello"))
+        self.assertEqual(result, {"text": "Ready 😀", "memory": {"active": 100}})
 
     def test_embedded_bootstrap_needs_no_project_files_or_sdk(self):
         config = dict(self.settings)
@@ -216,6 +258,28 @@ class BackendTests(unittest.TestCase):
     def resume_payload(self, call, **result):
         return {"backend": "apple_fm", "model_id": "", "owner": "test-conversation", "run_id": call["run_id"],
                 "result": {"id": call["id"], "name": call["name"], "content": "print(1)", "failed": False, **result}}
+
+    def test_heartbeats_preserve_generate_and_resume_handoffs(self):
+        self.namespace["HEARTBEAT_SECONDS"] = 0.02
+
+        async def backend(request, invoke):
+            await asyncio.sleep(0.12)
+            await invoke("read_file", {"path": "demo.py"})
+            await asyncio.sleep(0.12)
+            yield {"type": "text", "delta": "Read successfully"}
+            yield {"type": "finish", "reason": "stop"}
+
+        service = self.start(backend)
+        status, body = self.request(service, "/generate", self.tool_payload())
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"\n"))
+        call = json.loads(body)
+        self.assertEqual(call["type"], "tool_request")
+        status, body = self.request(service, "/resume", self.resume_payload(call))
+        self.assertEqual(status, 200)
+        self.assertTrue(body.startswith(b"\n"))
+        events = [json.loads(line) for line in body.splitlines() if line.strip()]
+        self.assertEqual(events, [{"type": "text", "delta": "Read successfully"}, {"type": "finish", "reason": "stop"}])
 
     def test_tool_result_resumes_same_generation_and_preserves_failure(self):
         invocations = []

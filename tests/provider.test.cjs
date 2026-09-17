@@ -69,6 +69,17 @@ test("selected groups preserve instructions and decode split Unicode bytes", asy
   assert.equal(events[0].delta, "你好 😀");
 });
 
+test("keepalives emit no content and never replace a terminal event", async () => {
+  const sandbox = runtime(async url => url.endsWith("/health") ? health(sandbox) : new Response(
+    '\n \r\n{"type":"text","delta":"Ready 😀"}\n\n{"type":"finish","reason":"stop"}\n'));
+  const events = [];
+  await sandbox.stream(context(), event => events.push(event));
+  assert.deepEqual(events.map(event => event.type), ["text", "provider_record", "finish"]);
+  assert.equal(events[0].delta, "Ready 😀");
+  const incomplete = runtime(async url => url.endsWith("/health") ? health(incomplete) : new Response('\n\n'));
+  await assert.rejects(incomplete.stream(context(), () => assert.fail()), /without a terminal/);
+});
+
 test("MLX profiles sharing one service send their own model and conversation owner", async () => {
   const bodies = [];
   for (const [index, modelID] of ["mlx-community/Qwen3-1.7B-4bit", "example/another-model"].entries()) {

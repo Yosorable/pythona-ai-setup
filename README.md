@@ -141,6 +141,11 @@ HTTP rounds expire after `request_seconds` (default 120 seconds). An initial MLX
 request uses `load_seconds` (default 900 seconds) to allow model downloads. Both can
 be adjusted in the shared service settings.
 
+While an HTTP response is waiting for model output, the service sends a blank-line
+heartbeat every 15 seconds. Both clients ignore these keepalives. This prevents the
+App's network idle timeout during downloads, model loading, or prompt prefill;
+heartbeats do not extend the model request deadline or prevent cancellation.
+
 The service exits after five minutes without requests or pending tool waits.
 This runs inside Pythona's interpreter and is not a persistent iOS background service.
 
