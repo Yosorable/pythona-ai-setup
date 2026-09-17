@@ -98,6 +98,8 @@ MLX and tokenizers, and uses `resolvelib` with PyPI metadata to select compatibl
 stable versions of MLX-LM and its complete dependency chain. The backend requires
 `mlx-lm>=0.31.3`; compatible installed packages are preferred, including on later
 offline requests. The small `resolvelib` helper is installed through Pythona if needed.
+Installed packages are also checked against their `Requires-Python` metadata,
+so an App upgrade that changes Python can trigger selection of a compatible replacement.
 
 When packages need to change, the complete version selection, including unchanged
 packages, bundled versions, and requested extras, is submitted in one

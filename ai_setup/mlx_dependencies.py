@@ -22,6 +22,7 @@ class MLXDependencyCandidate:
     requirements: tuple[str, ...] = ()
     extras: frozenset[str] = frozenset()
     bundled: bool = False
+    requires_python: str = ""
 
 
 def mlx_installed_version(name):
@@ -40,7 +41,8 @@ def mlx_distribution_candidates(distributions, *, bundled=False):
         name = canonicalize_name(dist.metadata["Name"])
         # Preserve sys.path precedence when a user package shadows a bundle.
         result.setdefault(name, MLXDependencyCandidate(
-            name, Version(dist.version), tuple(dist.requires or ()), bundled=bundled))
+            name, Version(dist.version), tuple(dist.requires or ()), bundled=bundled,
+            requires_python=dist.metadata.get("Requires-Python") or ""))
     return result
 
 
@@ -152,7 +154,8 @@ class MLXPyPIIndex:
                 continue
             info = data["info"]
             if self.supports_python(info.get("requires_python")):
-                yield MLXDependencyCandidate(name, version, tuple(info.get("requires_dist") or ()), extras)
+                yield MLXDependencyCandidate(name, version, tuple(info.get("requires_dist") or ()), extras,
+                                             requires_python=info.get("requires_python") or "")
 
 
 class MLXDependencyProvider:
@@ -198,7 +201,9 @@ class MLXDependencyProvider:
             existing = fixed or self.installed.get(identifier)
             if existing is not None:
                 existing = replace(existing, extras=extras)
+                # App upgrades can change Python while user packages stay installed.
                 if (existing not in excluded
+                        and self.index.supports_python(existing.requires_python)
                         and all(req.specifier.contains(existing.version, prereleases=True) for req in constraints)):
                     yield existing
             if fixed is not None:

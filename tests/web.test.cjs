@@ -86,6 +86,8 @@ test('MLX creation tests independently, then edits the installed entry without l
     assert.equal(await page.locator('#model-id').inputValue(), 'mlx-community/Qwen3-1.7B-4bit');
     assert.equal(await page.locator('#name').inputValue(), 'Qwen3-1.7B (MLX)');
     assert.match(await page.locator('.model-notice').innerText(), /older devices.*error/);
+    assert.equal(await page.locator('#mlx-first-use').isVisible(), true);
+    assert.match(await page.locator('#mlx-first-use').innerText(), /AI Assistant.*several minutes/);
     await page.locator('#browser').check();
     await page.locator('#prompt').fill('<script>window.injected = true</script>');
     await page.locator('#test').click();
@@ -108,6 +110,7 @@ test('MLX creation tests independently, then edits the installed entry without l
     await waitPage(page, 'edit');
     assert.equal(await page.locator('#browser').isChecked(), false);
     assert.equal(await page.locator('.model-notice').isVisible(), false);
+    assert.equal(await page.locator('#mlx-first-use').isVisible(), false);
     await page.locator('#back').click();
     await waitPage(page, 'home');
     await page.locator('.profile').nth(1).click();

@@ -94,8 +94,9 @@ class DependencyTests(unittest.TestCase):
             self.dependencies.metadata, "packages_distributions", return_value={}))
         self.output = self.enterContext(contextlib.redirect_stdout(io.StringIO()))
 
-    def candidate(self, name, version, requirements=(), *, bundled=False):
-        return self.dependencies.MLXDependencyCandidate(name, Version(version), tuple(requirements), bundled=bundled)
+    def candidate(self, name, version, requirements=(), *, bundled=False, python=""):
+        return self.dependencies.MLXDependencyCandidate(
+            name, Version(version), tuple(requirements), bundled=bundled, requires_python=python)
 
     def release(self, name, version, requirements, *, python=">=3.9", yanked=False, tag="py3-none-any"):
         file = {"filename": f"{name.replace('-', '_')}-{version}-{tag}.whl",
@@ -117,8 +118,8 @@ class DependencyTests(unittest.TestCase):
 
     def distribution_list(self, *, path=None):
         candidates = self.bundled if path is not None else self.installed
-        return [types.SimpleNamespace(metadata={"Name": c.name}, version=str(c.version),
-                                      requires=c.requirements) for c in candidates.values()]
+        return [types.SimpleNamespace(metadata={"Name": c.name, "Requires-Python": c.requires_python},
+                                      version=str(c.version), requires=c.requirements) for c in candidates.values()]
 
     def version(self, name):
         if name not in self.installed:
@@ -137,7 +138,8 @@ class DependencyTests(unittest.TestCase):
                 candidate = self.bundled[name]
                 self.assertEqual(candidate.version, Version(version))
             else:
-                candidate = self.candidate(name, version, self.releases[name][version]["info"]["requires_dist"])
+                info = self.releases[name][version]["info"]
+                candidate = self.candidate(name, version, info["requires_dist"], python=info["requires_python"])
             target[name] = replace(candidate, extras=frozenset(requirement.extras))
         # Verify the complete pinned graph, including extras and unchanged packages.
         for candidate in target.values():
@@ -249,6 +251,59 @@ class DependencyTests(unittest.TestCase):
         self.installer.reset_mock()
         self.dependencies.prepare_mlx_dependencies()
         self.fetch.assert_not_called()
+        self.installer.assert_not_called()
+
+    def test_python_upgrade_replaces_an_installed_package_that_no_longer_supports_python(self):
+        dependencies = self.releases["transformers"]["5.14.1"]["info"]["requires_dist"]
+        self.release("transformers", "5.14.1", dependencies, python=">=3.9,<3.14")
+        self.release("transformers", "5.13.0", dependencies, python=">=3.9")
+        self.environment.update(python_full_version="3.13.0", python_version="3.13")
+        self.dependencies.prepare_mlx_dependencies()
+        self.assertEqual(self.version("transformers"), "5.14.1")
+
+        self.environment.update(python_full_version="3.14.0", python_version="3.14")
+        self.installer.reset_mock()
+        self.dependencies.prepare_mlx_dependencies()
+        self.assertEqual(self.version("transformers"), "5.13.0")
+        self.installer.assert_called_once()
+        self.assertEqual(self.changed_batches[-1], {"transformers"})
+
+        self.installer.reset_mock()
+        self.fetch.reset_mock()
+        self.fetch.side_effect = AssertionError("The repaired environment must work offline")
+        self.dependencies.prepare_mlx_dependencies()
+        self.installer.assert_not_called()
+        self.fetch.assert_not_called()
+
+    def test_incompatible_installed_python_requirement_without_a_replacement_stops_setup(self):
+        self.dependencies.prepare_mlx_dependencies()
+        self.installed["transformers"] = replace(self.installed["transformers"], requires_python="<3.14")
+        self.release("transformers", "5.14.1", self.installed["transformers"].requirements, python="<3.14")
+        self.installer.reset_mock()
+        before = dict(self.installed)
+        with self.assertRaisesRegex(RuntimeError, "No compatible dependency set"):
+            self.dependencies.prepare_mlx_dependencies()
+        self.installer.assert_not_called()
+        self.assertEqual(self.installed, before)
+
+    def test_bundled_python_requirement_is_checked_without_replacing_the_bundle(self):
+        self.bundled["tokenizers"] = replace(self.bundled["tokenizers"], requires_python="<3.14")
+        self.installed.update(self.bundled)
+        with self.assertRaisesRegex(RuntimeError, "No compatible dependency set"):
+            self.dependencies.prepare_mlx_dependencies()
+        self.installer.assert_not_called()
+
+    def test_missing_python_requirement_remains_compatible_but_invalid_metadata_is_not_reused(self):
+        self.dependencies.prepare_mlx_dependencies()
+        self.installer.reset_mock()
+        for requirement in ("", ">=3.9,not-a-specifier"):
+            with self.subTest(requirement=requirement):
+                self.installed["transformers"] = replace(self.installed["transformers"], requires_python=requirement)
+                if requirement:
+                    with self.assertRaisesRegex(RuntimeError, "No compatible dependency set"):
+                        self.dependencies.prepare_mlx_dependencies()
+                else:
+                    self.dependencies.prepare_mlx_dependencies()
         self.installer.assert_not_called()
 
     def test_new_native_constraint_repairs_an_installed_incompatible_graph(self):

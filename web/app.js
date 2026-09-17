@@ -141,6 +141,7 @@
       $("detail-title").textContent = t(state.page === "new" ? "add_provider" : "edit_provider");
       $("back").textContent = t(state.page === "new" ? "cancel" : "back");
       $("mlx-settings").hidden = state.settings.backend !== "mlx_lm";
+      $("mlx-first-use").hidden = state.settings.backend !== "mlx_lm";
       $("availability").dataset.kind = state.availability.kind;
       $("availability-text").textContent = state.availability.message;
       $("install").firstElementChild.textContent = t(state.page === "new" ? "install" : "save_changes");
