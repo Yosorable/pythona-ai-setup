@@ -1,0 +1,9 @@
+[project]
+name = "pythona-ai-setup"
+version = "0.1.0"
+description = "AI provider setup and JavaScript provider integration for Pythona"
+readme = "README.md"
+requires-python = ">=3.11"
+
+[tool.ruff]
+line-length = 120

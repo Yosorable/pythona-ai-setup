@@ -1,0 +1,10 @@
+{
+  "name": "pythona-ai-setup",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.58.0"
+  }
+}

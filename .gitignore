@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+settings.local.json
+.settings-*
+node_modules/
+.DS_Store
+*.xcresult/
