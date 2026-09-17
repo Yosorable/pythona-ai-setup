@@ -9,7 +9,7 @@ import sys
 import threading
 import types
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import weakref
 
 from ai_setup.bundle import load_backend
@@ -41,6 +41,8 @@ class Tokenizer:
 class MLXTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.namespace = load_backend()
+        self.prepare_dependencies = Mock()
+        self.namespace["prepare_mlx_dependencies"] = self.prepare_dependencies
         self.worker = self.namespace["MLXWorker"]()
         self.workers = [self.worker]
         self.services = []
@@ -133,6 +135,36 @@ class MLXTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(model() is not None for model in self.models))
         self.assertEqual(self.cleanup_calls, ['synchronize', 'clear_cache'])
 
+    async def test_dependency_preparation_finishes_before_importing_mlx_lm(self):
+        def prepare():
+            self.assertEqual(self.loads, [])
+            self.assertNotEqual(threading.get_ident(), threading.main_thread().ident)
+            sys.modules['mlx_lm'] = self.lm
+        self.prepare_dependencies.side_effect = prepare
+        with patch.dict(sys.modules, {'mlx_lm': None}):
+            events = await self.collect()
+        self.assertEqual(events[-1]['type'], 'finish')
+        self.prepare_dependencies.assert_called_once()
+
+    async def test_dependency_failure_stops_loading_and_releases_the_worker(self):
+        self.prepare_dependencies.side_effect = RuntimeError('No compatible dependency set')
+        with self.assertRaisesRegex(RuntimeError, 'No compatible dependency set'):
+            await self.collect()
+        self.assertEqual(self.loads, [])
+        self.assertFalse(self.worker.lease.locked())
+        self.prepare_dependencies.side_effect = None
+        events = await self.collect()
+        self.assertEqual(events[-1]['type'], 'finish')
+
+    async def test_cached_model_checks_changes_to_the_shared_package_environment(self):
+        await self.collect()
+        self.prepare_dependencies.side_effect = RuntimeError('Restart Pythona')
+        with self.assertRaisesRegex(RuntimeError, 'Restart Pythona'):
+            await self.collect()
+        self.assertEqual(self.prepare_dependencies.call_count, 2)
+        self.assertEqual(len(self.loads), 1)
+        self.assertEqual(self.active, 0)
+
     async def test_tool_calls_use_individual_schemas_and_continue_with_native_results(self):
         self.request['tools'] = [READ_FILE]
         self.chunks = ['<think>Hidden reasoning</think>Reading <tool_call>{"name":"read_file","arguments":{"path":"a.py"}}</tool_call>', 'Result 😀']
@@ -208,6 +240,7 @@ class MLXTests(unittest.IsolatedAsyncioTestCase):
         await self.collect()
         self.assertEqual(len(self.loads), 1)
         self.assertEqual(len(set(self.threads)), 1)
+        self.assertEqual(self.prepare_dependencies.call_count, 2)
         self.assertEqual(self.tokenizer.prompts[1][0], [
             {'role': 'system', 'content': 'Different instructions'},
             {'role': 'user', 'content': 'Independent conversation'}])

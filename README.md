@@ -14,8 +14,9 @@ provider ID. Installation works even when the model is unavailable.
 - Apple Foundation Models: a supported device with Apple Intelligence and
   `apple-fm-sdk` for inference.
 - MLX-LM: Pythona's bundled MLX. On the first test or assistant request, the backend
-  installs `mlx-lm==0.31.3` through `pythona.packages` if it is missing, and downloads
-  the selected model from Hugging Face. Choose an MLX-compatible model repository.
+  selects MLX-LM and its dependencies for the current bundled libraries, then
+  downloads the selected model from Hugging Face. Dependency installation requires
+  Pythona's `pythona.packages.install_many` API. Choose an MLX-compatible model repository.
 
 The page follows Pythona's App language, with English as its source and fallback.
 It includes English, Simplified and Traditional Chinese, German, Spanish, French,
@@ -40,6 +41,9 @@ update the same provider ID. **Cancel** or **Back** discards unsubmitted edits.
 Model tests use the current form without saving it; testing never creates a provider.
 Installation and saving remain available even when the model is unavailable or a
 test fails.
+
+After pulling project updates, open each existing provider and choose **Save Changes**
+to replace its embedded backend with the updated code.
 
 Opening the page, opening an editor, and **Refresh** check saved provider IDs against
 Pythona. Confirmed missing IDs are removed from the list and the local record.
@@ -85,6 +89,33 @@ Only tools present in `ctx.nativeTools` can be selected. The provider does not
 additionally inspect `ctx.preferences.browserTools`. `ctx.instructions` is passed
 unchanged, and history is not automatically truncated. Startup calls are excluded
 from model history.
+
+## MLX dependency setup
+
+Before importing MLX-LM or reusing a loaded model, the MLX worker checks the shared
+Python package environment. It reads the actual bundled distributions, including
+MLX and tokenizers, and uses `resolvelib` with PyPI metadata to select compatible
+stable versions of MLX-LM and its complete dependency chain. The backend requires
+`mlx-lm>=0.31.3`; compatible installed packages are preferred, including on later
+offline requests. The small `resolvelib` helper is installed through Pythona if needed.
+
+When packages need to change, the complete version selection, including unchanged
+packages, bundled versions, and requested extras, is submitted in one
+`pythona.packages.install_many` call. Pythona still checks conflicts with other
+installed packages. Upgrading Pythona's bundled libraries or changing user packages
+causes the next MLX request to check the current environment again. No App-version
+table or persistent dependency lock file is used.
+
+If no compatible combination is found, dependency setup reports the conflicting
+requirements. A required version change to an already imported package reports
+that Pythona must restart; the backend does not replace a loaded package and
+continue with stale modules. A user package overriding a required bundled version
+must be removed before retrying. Model availability checks and adding or updating
+a provider never run dependency installation, and remain available when setup fails.
+
+The setup test and installed JavaScript provider embed and use the same dependency
+code. Desktop MLX smoke checks use the host's existing Python environment; automatic
+dependency installation runs only inside Pythona on iOS.
 
 ## Service and memory lifecycle
 
@@ -174,22 +205,24 @@ python3 main.py --preview --language en
 ```
 
 ```text
-main.py                Pythona entry point and desktop preview
-ai_setup/app.py        Profile actions and background tests
-ai_setup/ui.py         WebKit presentation and JSON bridge
-ai_setup/settings.py   Configuration records and provider installation
-ai_setup/model.py      Apple Foundation Models adapter and backend selection
-ai_setup/mlx_model.py  MLX-LM generation, tool parsing, and cleanup
-ai_setup/server.py     HTTP lifecycle and tool result handoffs
-ai_setup/provider.js   Provider protocol and embedded service startup
-web/                   HTML, CSS, and browser code
-tests/                 Python, JavaScript, and browser checks
+main.py                      Pythona entry point and desktop preview
+ai_setup/app.py              Profile actions and background tests
+ai_setup/ui.py               WebKit presentation and JSON bridge
+ai_setup/settings.py         Configuration records and provider installation
+ai_setup/model.py            Apple Foundation Models adapter and backend selection
+ai_setup/mlx_dependencies.py MLX dependency selection and coordinated installation
+ai_setup/mlx_model.py        MLX-LM generation, tool parsing, and cleanup
+ai_setup/server.py           HTTP lifecycle and tool result handoffs
+ai_setup/provider.js         Provider protocol and embedded service startup
+web/                         HTML, CSS, and browser code
+tests/                       Python, JavaScript, and browser checks
 ```
 
 Run host checks with Python 3.11+ and Node.js. Browser tests use an installed
 Google Chrome through Playwright; npm dependencies are only needed for these tests:
 
 ```sh
+python3 -m pip install -r requirements-dev.txt
 python3 -m unittest discover -s tests -p 'test_*.py'
 npm ci
 npm test

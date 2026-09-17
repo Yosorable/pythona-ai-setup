@@ -38,6 +38,18 @@ class FakeAI:
 
 
 class InstallTests(unittest.TestCase):
+    def test_add_mlx_provider_without_native_libraries_or_dependency_resolver(self):
+        missing = dict.fromkeys(('mlx', 'mlx_lm', 'packaging', 'resolvelib'))
+        with tempfile.TemporaryDirectory() as directory, patch.dict(sys.modules, missing):
+            store = SettingsStore(Path(directory) / 'settings.json')
+            ai = FakeAI()
+            provider_id = install(store, defaults('mlx_lm'), ai)
+            backend = load_backend()
+            self.assertFalse(backend['mlx_model_status']()['available'])
+            self.assertTrue(callable(backend['prepare_mlx_dependencies']))
+            self.assertEqual(store.data['profiles'][0]['provider_id'], provider_id)
+            self.assertIn('BACKEND_PAYLOAD', ai.providers[provider_id]['js_code'])
+
     def test_state_file_belongs_to_the_project_and_is_ignored(self):
         project = Path(__file__).resolve().parents[1]
         self.assertEqual(STATE_PATH, project / "settings.local.json")

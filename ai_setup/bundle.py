@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parent
 def backend_source():
     # Backend files share an isolated namespace; model SDKs are imported lazily.
     return "\n\n".join((ROOT / filename).read_text(encoding="utf-8")
-                       for filename in ("model.py", "mlx_model.py", "server.py"))
+                       for filename in ("model.py", "mlx_dependencies.py", "mlx_model.py", "server.py"))
 
 
 def backend_bundle():

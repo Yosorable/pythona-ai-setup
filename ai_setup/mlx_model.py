@@ -13,9 +13,6 @@ import types
 import uuid
 
 
-MLX_LM_VERSION = "0.31.3"
-
-
 def mlx_model_status():
     if importlib.util.find_spec("mlx") is None:
         return {"available": False, "reason": "MLX_UNAVAILABLE"}
@@ -251,13 +248,12 @@ class MLXWorker:
             if not self.lease.acquire(blocking=False):
                 raise RuntimeError("The previous MLX service is still releasing its model. Try again shortly.")
             self.leased = True
+        # Check before reusing weights too: scripts can change the shared package environment.
+        prepare_mlx_dependencies()
         if self.model_id == model_id:
             return self.model, self.tokenizer
         if self.model is not None:
             self._drop_model(release_lease=False)
-        if importlib.util.find_spec("mlx_lm") is None:
-            from pythona import packages
-            packages.install("mlx-lm", version=MLX_LM_VERSION)
         from mlx_lm import load
         self.model, self.tokenizer = load(model_id, tokenizer_config={"trust_remote_code": False})
         self.model_id = model_id

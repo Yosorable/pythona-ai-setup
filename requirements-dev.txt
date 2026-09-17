@@ -1,0 +1,2 @@
+packaging>=24.2
+resolvelib>=1.2.1,<2

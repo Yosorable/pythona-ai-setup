@@ -4,9 +4,13 @@ Read [README.md](README.md) for setup, architecture, and runtime limits.
 
 ## Runtime and providers
 
-- `ai_setup/bundle.py` combines `model.py`, `mlx_model.py`, and `server.py` into
-  one namespace and embeds them in JavaScript. Installed providers must work
-  without this repository's files; keep model SDK imports lazy.
+- `ai_setup/bundle.py` combines `model.py`, `mlx_dependencies.py`, `mlx_model.py`,
+  and `server.py` into one namespace and embeds them in JavaScript. Installed
+  providers must work without this repository's files; keep model SDK and
+  dependency resolver imports lazy.
+- Prepare MLX dependencies on its worker before importing model SDKs. Resolve
+  against actual bundled versions and submit the complete pinned set through
+  `pythona.packages.install_many`; retain installed-package and restart checks.
 - Each provider invocation gets a fresh JavaScript context. Preserve tool handoffs
   through provider records and resume the existing model run without replaying tools.
 - HTTP serving, downloads, and inference run on background threads. Starting the
