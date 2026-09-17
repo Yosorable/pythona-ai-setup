@@ -58,7 +58,9 @@ textarea { resize: vertical; min-height: 108px; }
 html[data-page="home"] main { max-width: 760px; }
 .home-heading, .detail-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 24px; }
 .home-heading h1, .detail-heading h1 { margin: 0; font-size: 27px; }
+.detail-heading { justify-content: flex-start; }
 .detail-heading h1 { font-size: 21px; }
+.detail-heading button { flex-shrink: 0; }
 .add-button { display: flex; align-items: center; justify-content: center; gap: 5px; flex-shrink: 0; padding: 11px 17px; border: 0; border-radius: 12px; background: var(--blue); color: #fff; font-size: 14px; font-weight: 650; }
 .provider-list.panel { padding: 0; overflow: hidden; }
 .profiles { display: grid; }

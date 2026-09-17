@@ -146,9 +146,11 @@ This runs inside Pythona's interpreter and is not a persistent iOS background se
 
 ## UI
 
-The page is plain HTML, CSS, and JavaScript inside a small WKWebView container with
-native navigation titles. The home page has Done; add and edit pages have localized
-Cancel and Back buttons. A validation or installation error keeps the form open.
+The page is plain HTML, CSS, and JavaScript inside a small WKWebView container. Its
+native navigation bar always shows Pythona AI Setup and a neutral close icon.
+Page titles and localized Cancel and Back buttons live in HTML; page changes do not
+update the native bar. Closing works independently of JavaScript and discards
+unsubmitted edits. A validation or installation error keeps the form open.
 Only the form's primary button saves changes. WebKit handles
 keyboard scrolling. The page has one document scroll area and no fixed-height
 chat output. Model checks and tests run in background threads. Closing the page

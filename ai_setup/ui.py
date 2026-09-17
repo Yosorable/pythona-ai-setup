@@ -37,16 +37,10 @@ def presenter():
 
 class PageHandler(NSObject, auto_rename=True):
     @objc_method
-    def doneTap(self):
+    def closeTap(self):
         host = self.host_ref()
         if host is not None and not host.app.closed.is_set():
-            host.request_close()
-
-    @objc_method
-    def backTap(self):
-        host = self.host_ref()
-        if host is not None and not host.app.closed.is_set():
-            host.request_back()
+            host.app.close()
 
     @objc_method
     def userContentController_didReceiveScriptMessage_(self, controller, message):
@@ -66,9 +60,6 @@ class WebSettings:
         self.app = app
         self.requests = queue.Queue()
         self.controller = self.navigation = self.webview = self.handler = None
-        self.page_ready = False
-        self.navigation_page = None
-        self.navigation_revision = 0
 
     def open(self):
         self.controller = ObjCClass("UIViewController").alloc().init()
@@ -77,7 +68,10 @@ class WebSettings:
         configuration.websiteDataStore = objc_value(ObjCClass("WKWebsiteDataStore"), "nonPersistentDataStore")
         self.handler = PageHandler.alloc().init()
         self.handler.host_ref = weakref.ref(self)
-        self.update_navigation({"page": "home", "revision": 0})
+        close = ObjCClass("UIBarButtonItem").alloc().initWithImage_style_target_action_(
+            ObjCClass("UIImage").systemImageNamed_("xmark"), 0, self.handler, SEL("closeTap"))
+        close.tintColor = objc_value(ObjCClass("UIColor"), "labelColor")
+        self.controller.navigationItem.rightBarButtonItem = close
         configuration.userContentController.addScriptMessageHandler_name_(self.handler, "setup")
         webview = ObjCClass("WKWebView").alloc().initWithFrame_configuration_(self.controller.view.bounds, configuration)
         webview.autoresizingMask = 2 | 16
@@ -90,39 +84,6 @@ class WebSettings:
         self.navigation.modalPresentationStyle = 0
         webview.loadHTMLString_baseURL_(render_page(self.app.tr.language), None)
         presenter().presentViewController_animated_completion_(self.navigation, True, None)
-
-    def request_close(self):
-        if not self.page_ready:
-            self.app.close()
-            return
-        self.controller.view.endEditing_(True)
-        self.webview.evaluateJavaScript_completionHandler_("void window.setupBridge.close()", None)
-
-    def request_back(self):
-        self.controller.view.endEditing_(True)
-        self.webview.evaluateJavaScript_completionHandler_("void window.setupBridge.back()", None)
-
-    def update_navigation(self, state):
-        if state["revision"] < self.navigation_revision:
-            return
-        self.navigation_revision = state["revision"]
-        page = state["page"]
-        if page == self.navigation_page:
-            return
-        self.navigation_page = page
-        self.controller.view.endEditing_(True)
-        item = self.controller.navigationItem
-        button = ObjCClass("UIBarButtonItem")
-        if page == "home":
-            self.controller.title = "Pythona AI Setup"
-            item.leftBarButtonItem = None
-            item.rightBarButtonItem = button.alloc().initWithTitle_style_target_action_(
-                self.app.tr("done"), 2, self.handler, SEL("doneTap"))
-        else:
-            self.controller.title = self.app.tr("add_provider" if page == "new" else "edit_provider")
-            title = self.app.tr("cancel") if page == "new" else "‹ " + self.app.tr("back")
-            item.leftBarButtonItem = button.alloc().initWithTitle_style_target_action_(title, 0, self.handler, SEL("backTap"))
-            item.rightBarButtonItem = None
 
     def process_next(self, timeout=0.1):
         try:
@@ -138,10 +99,6 @@ class WebSettings:
 
         def reply():
             if self.webview is not None:
-                if request.get("action") == "state" and "result" in response:
-                    self.page_ready = True
-                if "result" in response:
-                    self.update_navigation(response["result"])
                 self.webview.evaluateJavaScript_completionHandler_(code, None)
         run_on_ui(reply)
         return True

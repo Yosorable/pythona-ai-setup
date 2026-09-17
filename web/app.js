@@ -8,7 +8,6 @@
   document.title = "Pythona AI Setup";
   document.querySelectorAll("[data-i18n]").forEach(node => { node.textContent = t(node.dataset.i18n); });
   $("preview-note").hidden = !preview;
-  $("preview-navigation").hidden = !preview;
   let nextID = 0, state = null, working = false, stopped = false, polling = false, profilesSignature = "";
   const pending = new Map();
   const demo = { revision: 0, page: "home", editor_id: null, profiles: [], settings: null,
@@ -69,7 +68,6 @@
       clearTimeout(demoTimer);
       demo.test = { running: false, message: t("test_cancelled"), text: "", memory: "" };
     }
-    if (action === "close") { clearTimeout(demoTimer); demo.closed = true; }
     return JSON.parse(JSON.stringify({ ...demo, revision: ++demo.revision }));
   }
 
@@ -157,7 +155,7 @@
       $(id).disabled = working || state.closed;
     }
     $("backend").disabled ||= state.page === "edit";
-    if (switched) { showError(null); window.scrollTo(0, 0); }
+    if (switched) { document.activeElement?.blur(); showError(null); window.scrollTo(0, 0); }
     document.documentElement.dataset.ready = "true";
     if (state.closed) stopped = true;
   }
@@ -174,17 +172,10 @@
   $("refresh").addEventListener("click", () => perform("refresh"));
   $("backend").addEventListener("change", () => perform("backend", formPayload()));
   $("install").addEventListener("click", () => perform("install", formPayload()));
-  window.setupBridge.back = async () => {
-    if (state && state.page !== "home" && !stopped) await perform("back");
-  };
-  $("back").addEventListener("click", () => window.setupBridge.back());
-  window.setupBridge.close = async () => {
-    await window.setupReady;
-    if (state && !stopped) await perform("close");
-  };
+  $("back").addEventListener("click", () => perform("back"));
   $("test").addEventListener("click", () => perform(state.test.running ? "cancel_test" : "test",
     state.test.running ? { editor_id: state.editor_id } : { ...formPayload(), prompt: $("prompt").value }));
-  window.setupReady = call("state").then(render).catch(showError);
+  call("state").then(render).catch(showError);
   document.addEventListener("visibilitychange", () => { if (!document.hidden && state && !working && !stopped) perform("refresh"); });
   const poll = setInterval(async () => {
     if (stopped) { clearInterval(poll); return; }

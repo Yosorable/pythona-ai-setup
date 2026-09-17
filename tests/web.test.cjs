@@ -23,6 +23,8 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     await page.locator('#new').click();
     await waitPage(page, 'new');
     assert.equal(await page.locator('#home').isVisible(), false);
+    assert.equal(await page.locator('#detail-title').innerText(), 'Add Provider');
+    assert.equal(await page.locator('#back').innerText(), 'Cancel');
     assert.equal(await page.locator('#files').isChecked(), true);
     assert.equal(await page.locator('#browser').isChecked(), false);
     assert.equal(await page.locator('#availability').getAttribute('data-kind'), 'unavailable');
@@ -46,6 +48,8 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     const profileID = await page.locator('.profile').getAttribute('data-id');
     await page.locator('.profile').click();
     await waitPage(page, 'edit');
+    assert.equal(await page.locator('#detail-title').innerText(), 'Edit Provider');
+    assert.equal(await page.locator('#back').innerText(), 'Back');
     assert.equal(await page.locator('#install > span').first().innerText(), 'Save Changes');
     assert.equal(await page.locator('#backend').isDisabled(), true);
     await page.locator('#name').fill('Discarded edit');
@@ -61,8 +65,6 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     assert.equal(await page.locator('.profile').getAttribute('data-id'), profileID);
     assert.equal(await page.locator('.profile-name').innerText(), 'Saved edit');
     await page.screenshot({ path: '/tmp/pythona-ai-setup-pages-home.png', fullPage: true });
-    await page.evaluate(() => window.setupBridge.close());
-    assert.equal(await page.locator('#new').isDisabled(), true);
     assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
