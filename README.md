@@ -183,7 +183,7 @@ ai_setup/mlx_model.py  MLX-LM generation, tool parsing, and cleanup
 ai_setup/server.py     HTTP lifecycle and tool result handoffs
 ai_setup/provider.js   Provider protocol and embedded service startup
 web/                   HTML, CSS, and browser code
-tests/                 Python, JavaScript, browser, and iOS checks
+tests/                 Python, JavaScript, and browser checks
 ```
 
 Run host checks with Python 3.11+ and Node.js. Browser tests use an installed
@@ -202,15 +202,3 @@ release on shutdown. It does not download model weights or measure the full defa
 ```sh
 python3 scripts/test_mlx.py
 ```
-
-For integration testing with a Pythona source checkout and an arm64 iOS simulator:
-
-```sh
-python3 scripts/test_ios.py /path/to/Pythona --device SIMULATOR_UDID
-```
-
-The runner temporarily links the Swift test into Pythona's test target and removes
-that link afterward. It exercises WebKit, multiple provider installations, updates,
-manual deletion and recreation, current App tool schemas, and a mocked model
-exchange through JavaScriptCore. No project sources remain in the Pythona repository.
-Real software keyboard interaction and full-model inference need device verification.
