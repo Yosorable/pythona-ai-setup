@@ -1,13 +1,14 @@
-"""Manage independent provider profiles and background model tests."""
+"""A provider list and transient add/edit forms with background model tests."""
 
 import asyncio
 import copy
 import threading
+import uuid
 
 from .bundle import load_backend
 from .l10n import Localizer
 from .probe import test_model
-from .settings import install, provider_settings, validate
+from .settings import BACKENDS, defaults, install, provider_settings, validate
 
 
 class SetupApp:
@@ -19,75 +20,84 @@ class SetupApp:
         self.probe = probe or test_model
         self.lock = threading.RLock()
         self.closed = threading.Event()
+        self.page = "home"
+        self.editor_id = None
+        self.draft = None
         self.availability = {}
         self.tests = {}
         self.jobs = {}
-        self.install_messages = {}
         self.verified = {}
+        self.notice = ""
         self.revision = 0
 
     def snapshot(self):
         with self.lock:
             self.revision += 1
-            value = self.store.value
             profiles = [{key: copy.deepcopy(profile[key]) for key in ("id", "name", "backend", "model_id", "provider_id")}
-                        for profile in self.store.data["profiles"]]
+                        for profile in self.store.data["profiles"] if profile["provider_id"]]
             for profile in profiles:
-                profile["installation_status"] = self.verified.get(profile["id"], "checking" if profile["provider_id"] else "not_installed")
-            selected = self.store.data["selected_id"]
-            return {"revision": self.revision, "profiles": profiles, "selected_id": selected,
-                    "settings": None if value is None else {key: copy.deepcopy(value[key]) for key in
-                                                            ("id", "name", "backend", "model_id", "groups", "provider_id")},
-                    "availability": self.availability.get(selected, {"kind": "checking", "message": self.tr("checking")}),
-                    "test": self.tests.get(selected, {"running": False, "message": "", "text": "", "memory": ""}),
-                    "install_message": self.install_messages.get(selected, ""), "closed": self.closed.is_set()}
+                profile["installation_status"] = self.verified.get(profile["id"], "checking")
+            return {"revision": self.revision, "page": self.page, "editor_id": self.editor_id, "profiles": profiles,
+                    "settings": None if self.draft is None else {key: copy.deepcopy(self.draft[key]) for key in
+                                                               ("id", "name", "backend", "model_id", "groups", "provider_id")},
+                    "availability": self.availability.get(self.editor_id, {"kind": "checking", "message": self.tr("checking")}),
+                    "test": self.tests.get(self.editor_id, {"running": False, "message": "", "text": "", "memory": ""}),
+                    "notice": self.notice, "closed": self.closed.is_set()}
 
-    def _settings(self, payload):
-        if not isinstance(payload, dict) or set(payload) != {"profile_id", "settings"}:
+    def _settings(self, payload, validate_form=True):
+        if not isinstance(payload, dict) or set(payload) != {"editor_id", "settings"}:
             raise ValueError("Invalid settings request")
+        if self.draft is None or payload["editor_id"] != self.editor_id:
+            raise ValueError("This form has closed; open the provider again")
         value = payload["settings"]
-        if not isinstance(value, dict) or set(value) - {"name", "groups", "model_id"}:
+        if not isinstance(value, dict) or set(value) != {"name", "backend", "model_id", "groups"}:
             raise ValueError("Invalid settings request")
-        settings = copy.deepcopy(self.store.get(payload["profile_id"]))
+        if value["backend"] not in BACKENDS or not isinstance(value["name"], str) or not isinstance(value["model_id"], str):
+            raise ValueError("Invalid settings request")
+        if not isinstance(value["groups"], dict) or any(type(value["groups"].get(key)) is not bool for key in ("files", "browser", "python")):
+            raise ValueError("Invalid tool group settings")
+        if self.page == "edit" and value["backend"] != self.draft["backend"]:
+            raise ValueError("The backend of an existing provider cannot be changed")
+        settings = copy.deepcopy(self.draft)
         settings.update(value)
-        return validate(settings)
+        return validate(settings) if validate_form else settings
 
     def refresh_installations(self):
-        """Only a definitive missing-ID response invalidates a saved installation."""
+        """Only confirmed missing IDs remove entries; lookup errors preserve their records."""
         with self.lock:
-            profiles = list(self.store.data["profiles"])
             ai = self.ai
-            changed = False
-            for profile in profiles:
+            removed = []
+            for profile in self.store.data["profiles"]:
                 profile_id, provider_id = profile["id"], profile["provider_id"]
                 if not provider_id:
-                    self.verified[profile_id] = "not_installed"
+                    removed.append(profile_id)
                     continue
                 try:
                     if ai is None:
                         from pythona import ai
                     ai.get_custom_provider(provider_id)
                 except KeyError:
-                    profile["provider_id"] = None
-                    self.verified[profile_id] = "not_installed"
-                    self.install_messages[profile_id] = self.tr("provider_missing")
-                    changed = True
-                except Exception as error:
+                    removed.append(profile_id)
+                except Exception:
                     self.verified[profile_id] = "unknown"
-                    self.install_messages[profile_id] = self.tr("provider_check_failed", error=self.tr.error(error))
                 else:
                     self.verified[profile_id] = "installed"
-                    self.install_messages.pop(profile_id, None)
-            if changed:
-                self.store.save()
+            if removed:
+                self.store.remove(removed)
+                for profile_id in removed:
+                    self.verified.pop(profile_id, None)
+                if self.draft is not None and self.draft["id"] in removed:
+                    # Keep an open form available for reinstalling its deleted provider.
+                    self.draft["provider_id"] = None
+                    self.page = "new"
+                    self.notice = self.tr("provider_missing")
 
-    def check_availability(self, profile_id=None):
-        with self.lock:
-            profile_id = profile_id or self.store.data["selected_id"]
-            if profile_id is None:
-                return
-            settings = provider_settings(self.store.get(profile_id), self.store.service)
-            self.availability[profile_id] = {"kind": "checking", "message": self.tr("checking")}
+    def check_availability(self):
+        if self.draft is None:
+            return
+        editor_id = self.editor_id
+        settings = {"backend": self.draft["backend"], "model_id": self.draft["model_id"]}
+        self.availability[editor_id] = {"kind": "checking", "message": self.tr("checking")}
 
         def run():
             try:
@@ -99,9 +109,27 @@ class SetupApp:
             except Exception as error:
                 value = {"kind": "unavailable", "message": self.tr("check_failed", error=self.tr.error(error))}
             with self.lock:
-                if not self.closed.is_set():
-                    self.availability[profile_id] = value
+                if not self.closed.is_set() and self.editor_id == editor_id:
+                    self.availability[editor_id] = value
         threading.Thread(target=run, name="Local model availability", daemon=True).start()
+
+    def _cancel_test(self):
+        job = self.jobs.get(self.editor_id)
+        if job is not None and self.tests[self.editor_id]["running"]:
+            job["cancelled"].set()
+            self.tests[self.editor_id]["message"] = self.tr("cancelling")
+
+    def _home(self):
+        self._cancel_test()
+        self.page, self.editor_id, self.draft = "home", None, None
+
+    def _edit(self, settings, page):
+        self._cancel_test()
+        self.draft = copy.deepcopy(settings)
+        self.page = page
+        self.editor_id = uuid.uuid4().hex
+        self.notice = ""
+        self.check_availability()
 
     def dispatch(self, action, payload=None):
         with self.lock:
@@ -109,58 +137,68 @@ class SetupApp:
                 raise RuntimeError("The settings window has closed")
             if action == "state":
                 return self.snapshot()
+            if action == "close":
+                self.close()
+                return self.snapshot()
             if action == "refresh":
+                self.notice = ""
                 self.refresh_installations()
-                self.check_availability()
                 return self.snapshot()
             if action == "new":
-                profile = self.store.add(payload["backend"])
-                self.check_availability(profile["id"])
+                self._edit(defaults(), "new")
                 return self.snapshot()
-            if action == "select":
-                self.store.select(payload["profile_id"])
+            if action == "edit":
                 self.refresh_installations()
-                self.check_availability()
+                try:
+                    profile = self.store.get(payload["profile_id"])
+                except KeyError:
+                    self._home()
+                    self.notice = self.tr("provider_removed")
+                else:
+                    self._edit(profile, "edit")
                 return self.snapshot()
-            if action == "remove":
-                profile_id = payload["profile_id"]
+            if action == "back":
+                self._home()
+                self.notice = ""
                 self.refresh_installations()
-                self.store.remove(profile_id)
-                if profile_id in self.jobs:
-                    self.jobs[profile_id]["cancelled"].set()
-                self.check_availability()
                 return self.snapshot()
-            if action in ("save", "install", "close"):
-                settings = None if action == "close" and payload is None and self.store.value is None else self._settings(payload)
-                if action == "install":
-                    provider_id = install(self.store, settings, self.ai)
-                    self.verified[settings["id"]] = "installed"
-                    self.install_messages[settings["id"]] = self.tr("install_success", id=provider_id)
-                elif settings is not None:
-                    self.store.save(settings)
-                if action == "close":
-                    self.close()
+            if action == "backend":
+                if self.page != "new":
+                    raise ValueError("The backend of an existing provider cannot be changed")
+                settings = self._settings(payload, validate_form=False)
+                old = defaults(self.draft["backend"])
+                new = defaults(settings["backend"])
+                if settings["name"] == old["name"]:
+                    settings["name"] = new["name"]
+                settings["model_id"] = new["model_id"]
+                self._edit(settings, "new")
+                return self.snapshot()
+            if action == "install":
+                settings = self._settings(payload)
+                added = self.page == "new"
+                install(self.store, settings, self.ai)
+                self.verified[settings["id"]] = "installed"
+                self._home()
+                self.notice = self.tr("provider_added" if added else "provider_updated")
                 return self.snapshot()
             if action == "cancel_test":
-                profile_id = payload["profile_id"]
-                job = self.jobs.get(profile_id)
-                if job is not None and self.tests[profile_id]["running"]:
-                    job["cancelled"].set()
-                    self.tests[profile_id]["message"] = self.tr("cancelling")
+                if self.draft is None or payload.get("editor_id") != self.editor_id:
+                    raise ValueError("This form has closed; open the provider again")
+                self._cancel_test()
                 return self.snapshot()
             if action != "test" or not isinstance(payload, dict):
                 raise ValueError("Unknown settings action")
-            settings = self._settings({key: payload[key] for key in ("profile_id", "settings")})
-            profile_id = settings["id"]
-            if self.tests.get(profile_id, {}).get("running"):
+            settings = self._settings({key: payload[key] for key in ("editor_id", "settings")})
+            editor_id = self.editor_id
+            if self.tests.get(editor_id, {}).get("running"):
                 raise RuntimeError("A model test is already running")
             prompt = payload.get("prompt")
             if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 32000:
                 raise ValueError("Enter a test message of up to 32,000 characters")
-            self.store.save(settings)
+            self.draft = settings
             runtime = provider_settings(settings, self.store.service)
             cancelled = threading.Event()
-            self.tests[profile_id] = {"running": True, "message": self.tr("test_running"), "text": "", "memory": ""}
+            self.tests[editor_id] = {"running": True, "message": self.tr("test_running"), "text": "", "memory": ""}
 
             def run():
                 memory = ""
@@ -175,10 +213,10 @@ class SetupApp:
                 except Exception as error:
                     message, text = self.tr("test_failed", error=self.tr.error(error)), ""
                 with self.lock:
-                    self.tests[profile_id] = {"running": False, "message": message, "text": text, "memory": memory}
+                    self.tests[editor_id] = {"running": False, "message": message, "text": text, "memory": memory}
 
             worker = threading.Thread(target=run, name="Local model test", daemon=True)
-            self.jobs[profile_id] = {"worker": worker, "cancelled": cancelled}
+            self.jobs[editor_id] = {"worker": worker, "cancelled": cancelled}
             worker.start()
             return self.snapshot()
 

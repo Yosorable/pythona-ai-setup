@@ -1,6 +1,7 @@
-"""Profile identity, native installation checks, and independent background tests."""
+"""List/detail navigation, explicit saves, and native installation checks."""
 
 import asyncio
+import copy
 from pathlib import Path
 import tempfile
 import threading
@@ -19,117 +20,156 @@ class AppTests(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.store = SettingsStore(Path(self.directory.name) / 'settings.local.json')
+        self.store.save()
         self.ai = FakeAI()
         self.app = SetupApp(self.store, ai=self.ai, status=lambda settings: {'available': False, 'reason': 'DEVICE_NOT_ELIGIBLE'})
         self.addCleanup(self.app.close)
 
-    def form(self, name='Local Model', profile_id=None):
-        profile_id = profile_id or self.store.value['id']
-        return {'profile_id': profile_id, 'settings': {'name': name, 'model_id': self.store.get(profile_id)['model_id'],
-                'groups': {'files': True, 'browser': False, 'python': False}}}
+    def form(self, name=None):
+        state = self.app.snapshot()
+        value = {key: copy.deepcopy(state['settings'][key]) for key in ('name', 'backend', 'model_id', 'groups')}
+        if name is not None:
+            value['name'] = name
+        return {'editor_id': state['editor_id'], 'settings': value}
 
-    def test_save_install_and_update_keep_id_and_hide_service_credentials(self):
-        self.app.check_availability()
-        first = self.app.dispatch('install', self.form())
-        provider_id = first['settings']['provider_id']
-        updated = self.app.dispatch('install', self.form('Updated'))
-        self.assertEqual(updated['settings']['provider_id'], provider_id)
+    def new(self, backend='apple_fm'):
+        self.app.dispatch('new')
+        if backend != 'apple_fm':
+            form = self.form()
+            form['settings']['backend'] = backend
+            self.app.dispatch('backend', form)
+        return self.app.snapshot()
+
+    def add(self, name='Local Model', backend='apple_fm'):
+        self.new(backend)
+        state = self.app.dispatch('install', self.form(name))
+        self.assertEqual(state['page'], 'home')
+        return state['profiles'][-1]
+
+    def test_new_forms_and_model_tests_stay_in_memory_until_add(self):
+        before = self.store.path.read_bytes()
+        self.assertEqual(self.app.snapshot()['page'], 'home')
+        self.assertEqual(self.app.snapshot()['profiles'], [])
+        draft = self.new('mlx_lm')
+        self.assertEqual(draft['settings']['model_id'], DEFAULT_MLX_MODEL)
+        self.app.probe = lambda settings, prompt, cancelled: {'text': 'Test reply', 'seconds': 0.1}
+        self.app.dispatch('test', {**self.form('Draft only'), 'prompt': 'Hi'})
+        self.app.jobs[draft['editor_id']]['worker'].join(2)
+        self.assertEqual(self.ai.created, 0)
+        self.assertEqual(self.store.path.read_bytes(), before)
+        self.app.dispatch('back')
+        self.assertEqual(self.app.snapshot()['profiles'], [])
+        self.assertIsNone(self.app.snapshot()['settings'])
+        self.assertEqual(self.new()['settings']['name'], 'Apple On-Device Model')
+
+    def test_add_and_save_update_one_provider_and_hide_service_credentials(self):
+        apple = self.add()
+        provider_id = apple['provider_id']
+        self.assertNotIn('service_token', repr(self.app.snapshot()))
+        self.app.dispatch('edit', {'profile_id': apple['id']})
+        changed = self.app.dispatch('install', self.form('Updated'))
+        self.assertEqual(changed['profiles'][0]['provider_id'], provider_id)
         self.assertEqual(self.ai.created, 1)
-        self.assertEqual(SettingsStore(self.store.path).value['provider_id'], provider_id)
-        self.assertNotIn('service_token', repr(updated))
-        self.app.dispatch('close', self.form('Saved on close'))
+        self.assertEqual(self.ai.get_custom_provider(provider_id)['name'], 'Updated')
+        self.assertEqual(SettingsStore(self.store.path).get(apple['id'])['name'], 'Updated')
+        self.app.dispatch('edit', {'profile_id': apple['id']})
+        self.app.probe = lambda settings, prompt, cancelled: {'text': 'OK', 'seconds': 0.1}
+        editor = self.app.editor_id
+        self.app.dispatch('test', {**self.form('Unsaved change'), 'prompt': 'Hi'})
+        self.app.jobs[editor]['worker'].join(2)
+        self.app.dispatch('back')
+        self.app.dispatch('close')
         self.assertTrue(self.app.closed.is_set())
-        self.assertEqual(SettingsStore(self.store.path).value['name'], 'Saved on close')
+        self.assertEqual(SettingsStore(self.store.path).get(apple['id'])['name'], 'Updated')
 
-    def test_profiles_have_independent_ids_and_late_edits_target_their_original_profile(self):
-        apple = self.app.dispatch('install', self.form('Apple'))['settings']
-        mlx = self.app.dispatch('new', {'backend': 'mlx_lm'})['settings']
-        self.assertEqual(mlx['model_id'], DEFAULT_MLX_MODEL)
-        self.app.dispatch('install', self.form('MLX'))
-        self.app.dispatch('save', self.form('Apple edited', apple['id']))
-        self.assertEqual(self.store.value['id'], mlx['id'])
-        self.assertEqual(self.store.value['name'], 'MLX')
-        self.assertEqual(self.store.get(apple['id'])['name'], 'Apple edited')
-        self.app.dispatch('install', self.form('Apple updated', apple['id']))
-        self.assertEqual(self.store.get(apple['id'])['provider_id'], apple['provider_id'])
+    def test_profiles_and_editor_sessions_are_independent(self):
+        apple = self.add('Apple')
+        mlx = self.add('MLX', 'mlx_lm')
+        self.assertNotEqual(apple['provider_id'], mlx['provider_id'])
+        self.app.dispatch('edit', {'profile_id': apple['id']})
+        outdated = self.form('Stale edit')
+        self.app.dispatch('back')
+        self.app.dispatch('edit', {'profile_id': mlx['id']})
+        with self.assertRaisesRegex(ValueError, 'form has closed'):
+            self.app.dispatch('install', outdated)
+        self.app.dispatch('install', self.form('MLX changed'))
+        self.assertEqual(self.store.get(apple['id'])['name'], 'Apple')
+        self.assertEqual(self.store.get(mlx['id'])['name'], 'MLX changed')
         self.assertEqual(self.ai.created, 2)
-        self.assertNotEqual(self.store.value['provider_id'], apple['provider_id'])
-        restored = SettingsStore(self.store.path)
-        self.assertEqual(len(restored.data['profiles']), 2)
-        self.assertEqual(restored.data['selected_id'], mlx['id'])
+        self.assertEqual(set(SettingsStore(self.store.path).data), {'service', 'profiles'})
 
-    def test_refresh_verifies_ids_and_only_recreates_a_deleted_provider(self):
-        apple = self.app.dispatch('install', self.form('Apple'))['settings']
-        self.app.dispatch('new', {'backend': 'mlx_lm'})
-        mlx = self.app.dispatch('install', self.form('MLX'))['settings']
-        # Startup treats the JSON IDs as unverified until the App confirms them.
+    def test_refresh_removes_deleted_providers_from_home_and_disk(self):
+        apple = self.add('Apple')
+        mlx = self.add('MLX', 'mlx_lm')
         reopened = SetupApp(SettingsStore(self.store.path), ai=self.ai, status=self.app.status)
+        self.assertEqual(reopened.snapshot()['page'], 'home')
         self.assertEqual(reopened.snapshot()['profiles'][0]['installation_status'], 'checking')
         del self.ai.providers[apple['provider_id']]
         state = reopened.dispatch('refresh')
-        self.assertIsNone(state['profiles'][0]['provider_id'])
-        self.assertEqual(state['profiles'][1]['provider_id'], mlx['provider_id'])
-        self.assertEqual(state['profiles'][1]['installation_status'], 'installed')
-        reopened.dispatch('select', {'profile_id': apple['id']})
-        replacement = reopened.dispatch('install', self.form('Apple again', apple['id']))['settings']['provider_id']
-        self.assertNotEqual(replacement, apple['provider_id'])
-        self.assertEqual(self.ai.created, 3)
-        self.assertEqual(SettingsStore(self.store.path).get(apple['id'])['provider_id'], replacement)
+        self.assertEqual([p['provider_id'] for p in state['profiles']], [mlx['provider_id']])
+        self.assertEqual(state['profiles'][0]['installation_status'], 'installed')
+        self.assertEqual(len(SettingsStore(self.store.path).data['profiles']), 1)
         reopened.close()
 
-    def test_read_failure_preserves_provider_id_and_does_not_create_duplicates(self):
-        installed = self.app.dispatch('install', self.form())['settings']['provider_id']
+    def test_deleted_provider_can_be_recreated_from_an_open_editor(self):
+        profile = self.add()
+        self.app.dispatch('edit', {'profile_id': profile['id']})
+        del self.ai.providers[profile['provider_id']]
+        refreshed = self.app.dispatch('refresh')
+        self.assertEqual(refreshed['page'], 'new')
+        self.assertEqual(refreshed['profiles'], [])
+        saved = self.app.dispatch('install', self.form('Restored'))
+        self.assertNotEqual(saved['profiles'][0]['provider_id'], profile['provider_id'])
+        self.assertEqual(self.ai.created, 2)
+
+    def test_native_failures_do_not_create_drafts_or_overwrite_saved_settings(self):
+        self.new()
+        with patch.object(self.ai, 'create_custom_provider', side_effect=RuntimeError('Native write failed')):
+            with self.assertRaisesRegex(RuntimeError, 'Native write failed'):
+                self.app.dispatch('install', self.form())
+        self.assertEqual(SettingsStore(self.store.path).data['profiles'], [])
+        self.assertEqual(self.app.snapshot()['page'], 'new')
+        saved = self.app.dispatch('install', self.form())['profiles'][0]
         with patch.object(self.ai, 'get_custom_provider', side_effect=RuntimeError('Temporary native failure')):
             state = self.app.dispatch('refresh')
-            self.assertEqual(state['settings']['provider_id'], installed)
+            self.assertEqual(state['profiles'][0]['provider_id'], saved['provider_id'])
             self.assertEqual(state['profiles'][0]['installation_status'], 'unknown')
+            self.app.dispatch('edit', {'profile_id': saved['id']})
             with self.assertRaisesRegex(RuntimeError, 'Temporary native failure'):
-                self.app.dispatch('install', self.form())
-            self.assertEqual(self.ai.created, 1)
-        self.assertEqual(self.app.dispatch('refresh')['profiles'][0]['installation_status'], 'installed')
+                self.app.dispatch('install', self.form('Not saved'))
+        self.assertEqual(self.ai.created, 1)
+        self.assertEqual(SettingsStore(self.store.path).get(saved['id'])['name'], saved['name'])
 
-    def test_pending_probe_stays_with_its_profile_and_can_be_cancelled(self):
+    def test_adding_while_probe_runs_returns_home_and_cancels_the_probe(self):
         started = threading.Event()
         def probe(settings, prompt, cancelled):
             started.set()
             cancelled.wait(3)
             raise asyncio.CancelledError
         self.app.probe = probe
-        apple = self.store.value['id']
-        state = self.app.dispatch('test', {**self.form(), 'prompt': 'Hello'})
-        self.assertTrue(state['test']['running'])
+        self.new()
+        editor = self.app.editor_id
+        self.app.dispatch('test', {**self.form(), 'prompt': 'Hello'})
         self.assertTrue(started.wait(1))
-        other = self.app.dispatch('new', {'backend': 'mlx_lm'})
-        self.assertFalse(other['test']['running'])
-        self.app.dispatch('install', self.form())
-        self.app.dispatch('cancel_test', {'profile_id': apple})
-        self.app.jobs[apple]['worker'].join(2)
-        self.assertFalse(self.app.jobs[apple]['worker'].is_alive())
-        self.app.dispatch('select', {'profile_id': apple})
-        self.assertEqual(self.app.snapshot()['test']['message'], 'Test cancelled')
+        saved = self.app.dispatch('install', self.form())
+        self.assertEqual(saved['page'], 'home')
+        self.app.jobs[editor]['worker'].join(2)
+        self.assertTrue(self.app.jobs[editor]['cancelled'].is_set())
         self.assertEqual(self.ai.created, 1)
 
-    def test_failed_save_keeps_window_open_and_rejects_private_fields(self):
+    def test_validation_keeps_form_open_and_rejects_private_fields(self):
+        self.new()
         with self.assertRaises(ValueError):
-            self.app.dispatch('close', self.form(''))
+            self.app.dispatch('install', self.form(''))
         payload = self.form()
         payload['settings']['port'] = 1234
         with self.assertRaises(ValueError):
-            self.app.dispatch('save', payload)
+            self.app.dispatch('install', payload)
+        self.assertEqual(self.app.snapshot()['page'], 'new')
         self.assertEqual(self.store.service['port'], 8768)
-        self.assertFalse(self.app.closed.is_set())
-
-    def test_remove_rechecks_native_provider_and_empty_library_can_close(self):
-        installed = self.app.dispatch('install', self.form())['settings']['provider_id']
-        payload = {'profile_id': self.store.value['id']}
-        with self.assertRaises(ValueError):
-            self.app.dispatch('remove', payload)
-        del self.ai.providers[installed]
-        state = self.app.dispatch('remove', payload)
-        self.assertEqual(state['profiles'], [])
-        self.assertIsNone(state['settings'])
-        self.app.dispatch('close')
-        self.assertTrue(self.app.closed.is_set())
+        self.assertEqual(self.ai.created, 0)
+        self.app.dispatch('back')
+        self.assertEqual(self.app.snapshot()['page'], 'home')
 
     def test_all_languages_render_without_external_assets(self):
         keys = set(STRINGS['en'])

@@ -23,34 +23,41 @@ Japanese, Korean, and Russian. Light and dark appearances are supported.
 
 ## Use
 
-1. Run `main.py` in Pythona. Select an existing configuration, or choose a backend
-   and **Add Configuration**.
-2. Set the connection name and tools. File tools are enabled by default;
+1. Run `main.py` in Pythona. The home page lists installed providers managed by this
+   project. Choose **Add** to open a new provider form.
+2. Choose the backend, connection name, and tools. File tools are enabled by default;
    browser and Python tools are initially disabled.
 3. For MLX-LM, enter a Hugging Face model ID. The default is
    `mlx-community/Qwen3-1.7B-4bit`, matching Pythona's `llm_demo.py` example.
    Its first download is about 1 GB.
 4. Optionally run a test in the separate **Test Conversation** section.
-5. Choose **Add to AI Assistant**, then close the page and select the connection
-   in Pythona's AI Assistant settings. Use **Update Provider** to update that
-   configuration without changing its provider ID.
+5. Choose **Add to AI Assistant**. This installs the provider, saves its local record,
+   and returns to the list. Select the connection in Pythona's AI Assistant settings
+   to start chatting.
 
-Opening the page, switching configurations, and **Refresh** check saved provider
-IDs against Pythona. A missing ID is marked as uninstalled; installing again creates
-and records a new ID. A lookup failure preserves the ID and reports the error.
-Updates also check the ID immediately before using it. Only IDs saved by this project
-are queried; Pythona's other providers are not enumerated.
+Tap a list entry to edit its model, name, or tools, then choose **Save Changes** to
+update the same provider ID. **Cancel** or **Back** discards unsubmitted edits.
+Model tests use the current form without saving it; testing never creates a provider.
+Installation and saving remain available even when the model is unavailable or a
+test fails.
+
+Opening the page, opening an editor, and **Refresh** check saved provider IDs against
+Pythona. Confirmed missing IDs are removed from the list and the local record.
+A lookup failure preserves the record and displays an unverified status. Saving an
+open editor also checks its ID, recreating the provider if it was deleted meanwhile.
+Only IDs saved by this project are queried; Pythona's other providers are not enumerated.
 
 To delete an installed provider, remove it in Pythona's AI Assistant settings.
-Refresh this page to detect the deletion, then use **Remove Configuration** if you
-also want to remove its setup record. Draft configurations can be removed directly.
+Refresh this page to remove the corresponding list entry and setup record.
 
 ## Storage and privacy
 
-`settings.local.json`, next to `main.py`, contains a `profiles` array, the
-`selected_id`, and shared `service` settings. Every profile has its own local `id`
+`settings.local.json`, next to `main.py`, contains an installed `profiles` array and
+shared `service` settings. Every profile has its own local `id`
 and a separate `provider_id` returned by Pythona. This file is ignored by Git.
-There is no migration from the previous single-configuration format.
+Drafts and navigation state stay in memory. There is no migration from previous
+storage formats; delete the old JSON file before using this version. Deleting this
+file forgets its provider IDs but does not delete installed providers from Pythona.
 
 Each installed provider contains its runtime configuration under
 `local_model_settings` in that provider's localStorage. Updating replaces its
@@ -140,8 +147,9 @@ This runs inside Pythona's interpreter and is not a persistent iOS background se
 ## UI
 
 The page is plain HTML, CSS, and JavaScript inside a small WKWebView container with
-a native navigation title and localized Done button. Done saves the latest form
-values before closing; a validation error keeps the page open. WebKit handles
+native navigation titles. The home page has Done; add and edit pages have localized
+Cancel and Back buttons. A validation or installation error keeps the form open.
+Only the form's primary button saves changes. WebKit handles
 keyboard scrolling. The page has one document scroll area and no fixed-height
 chat output. Model checks and tests run in background threads. Closing the page
 removes the message handler and requests cancellation of active tests.

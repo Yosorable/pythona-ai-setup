@@ -43,6 +43,12 @@ class PageHandler(NSObject, auto_rename=True):
             host.request_close()
 
     @objc_method
+    def backTap(self):
+        host = self.host_ref()
+        if host is not None and not host.app.closed.is_set():
+            host.request_back()
+
+    @objc_method
     def userContentController_didReceiveScriptMessage_(self, controller, message):
         host = self.host_ref()
         if host is not None and not host.app.closed.is_set() and objc_value(message.frameInfo, "isMainFrame"):
@@ -61,6 +67,8 @@ class WebSettings:
         self.requests = queue.Queue()
         self.controller = self.navigation = self.webview = self.handler = None
         self.page_ready = False
+        self.navigation_page = None
+        self.navigation_revision = 0
 
     def open(self):
         self.controller = ObjCClass("UIViewController").alloc().init()
@@ -69,8 +77,7 @@ class WebSettings:
         configuration.websiteDataStore = objc_value(ObjCClass("WKWebsiteDataStore"), "nonPersistentDataStore")
         self.handler = PageHandler.alloc().init()
         self.handler.host_ref = weakref.ref(self)
-        self.controller.navigationItem.rightBarButtonItem = ObjCClass("UIBarButtonItem").alloc().initWithTitle_style_target_action_(
-            self.app.tr("done"), 2, self.handler, SEL("doneTap"))
+        self.update_navigation({"page": "home", "revision": 0})
         configuration.userContentController.addScriptMessageHandler_name_(self.handler, "setup")
         webview = ObjCClass("WKWebView").alloc().initWithFrame_configuration_(self.controller.view.bounds, configuration)
         webview.autoresizingMask = 2 | 16
@@ -89,8 +96,33 @@ class WebSettings:
             self.app.close()
             return
         self.controller.view.endEditing_(True)
-        # Read the latest form values, including edits that have not fired change yet.
         self.webview.evaluateJavaScript_completionHandler_("void window.setupBridge.close()", None)
+
+    def request_back(self):
+        self.controller.view.endEditing_(True)
+        self.webview.evaluateJavaScript_completionHandler_("void window.setupBridge.back()", None)
+
+    def update_navigation(self, state):
+        if state["revision"] < self.navigation_revision:
+            return
+        self.navigation_revision = state["revision"]
+        page = state["page"]
+        if page == self.navigation_page:
+            return
+        self.navigation_page = page
+        self.controller.view.endEditing_(True)
+        item = self.controller.navigationItem
+        button = ObjCClass("UIBarButtonItem")
+        if page == "home":
+            self.controller.title = "Pythona AI Setup"
+            item.leftBarButtonItem = None
+            item.rightBarButtonItem = button.alloc().initWithTitle_style_target_action_(
+                self.app.tr("done"), 2, self.handler, SEL("doneTap"))
+        else:
+            self.controller.title = self.app.tr("add_provider" if page == "new" else "edit_provider")
+            title = self.app.tr("cancel") if page == "new" else "‹ " + self.app.tr("back")
+            item.leftBarButtonItem = button.alloc().initWithTitle_style_target_action_(title, 0, self.handler, SEL("backTap"))
+            item.rightBarButtonItem = None
 
     def process_next(self, timeout=0.1):
         try:
@@ -108,6 +140,8 @@ class WebSettings:
             if self.webview is not None:
                 if request.get("action") == "state" and "result" in response:
                     self.page_ready = True
+                if "result" in response:
+                    self.update_navigation(response["result"])
                 self.webview.evaluateJavaScript_completionHandler_(code, None)
         run_on_ui(reply)
         return True
@@ -130,7 +164,6 @@ def main():
     try:
         run_on_ui(host.open).wait()
         app.refresh_installations()
-        app.check_availability()
         while not app.closed.is_set():
             host.process_next()
     finally:

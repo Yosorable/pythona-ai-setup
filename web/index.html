@@ -12,67 +12,69 @@
 <body>
   <main>
     <div id="preview-note" class="preview-note" data-i18n="preview_note" hidden></div>
-    <div class="intro">
-      <div class="eyebrow"><span class="dot"></span><span data-i18n="on_device"></span></div>
-      <h1 data-i18n="title"></h1>
-      <p data-i18n="intro"></p>
-    </div>
-    <section class="panel profiles-panel">
-      <div class="profiles-heading"><h2 data-i18n="profiles"></h2><button id="refresh" class="compact" data-i18n="refresh" disabled></button></div>
-      <div id="profiles" class="profiles"></div>
-      <p id="empty-profiles" class="hint" data-i18n="empty_profiles" hidden></p>
-      <div class="new-profile"><label for="new-backend" data-i18n="backend"></label><select id="new-backend"><option value="apple_fm" data-i18n="apple_backend"></option><option value="mlx_lm">MLX-LM</option></select><button id="new" class="compact" data-i18n="new_profile" disabled></button></div>
-      <p id="error" class="error" hidden></p>
+    <p id="error" class="error" hidden></p>
+    <section id="home" class="home-page">
+      <div class="home-heading"><h1 data-i18n="providers"></h1><button id="new" class="add-button" disabled><span>＋</span><span data-i18n="add"></span></button></div>
+      <p id="home-notice" class="notice" hidden></p>
+      <div class="panel provider-list">
+        <div id="profiles" class="profiles"></div>
+        <div id="empty-profiles" class="empty-state" hidden><h2 data-i18n="no_providers"></h2><p data-i18n="empty_providers_help"></p></div>
+      </div>
+      <div class="list-footer"><p data-i18n="providers_help"></p><button id="refresh" class="compact" data-i18n="refresh" disabled></button></div>
     </section>
-    <div id="editor" class="panels">
-      <section class="panel settings-panel">
-        <div class="section-heading"><span class="section-number">01</span><h2 data-i18n="settings"></h2></div>
-        <div id="availability" class="availability" data-kind="checking"><span class="status-dot"></span><span id="availability-text" data-i18n="checking"></span></div>
-        <label class="field-label" for="name" data-i18n="connection_name"></label>
-        <input id="name" type="text" autocomplete="off" spellcheck="false" disabled>
-        <div id="mlx-settings" class="model-field" hidden>
-          <label class="field-label" for="model-id" data-i18n="model_id"></label>
-          <input id="model-id" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" disabled>
-          <p class="hint" data-i18n="model_help"></p>
-          <p class="model-notice" data-i18n="mlx_device_warning"></p>
-        </div>
-        <fieldset id="tools" disabled>
-          <legend data-i18n="tools"></legend>
-          <label class="tool-row">
-            <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7M8 14h8M8 17h5"/></svg></span>
-            <span class="tool-copy"><span class="tool-name" data-i18n="files"></span><span class="tool-description" data-i18n="files_help"></span></span>
-            <input type="checkbox" id="files" class="switch" checked>
-          </label>
-          <label class="tool-row">
-            <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg></span>
-            <span class="tool-copy"><span class="tool-name" data-i18n="browser"></span><span class="tool-description" data-i18n="browser_help"></span></span>
-            <input type="checkbox" id="browser" class="switch">
-          </label>
-          <label class="tool-row">
-            <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg></span>
-            <span class="tool-copy"><span class="tool-name" data-i18n="python"></span><span class="tool-description" data-i18n="python_help"></span></span>
-            <input type="checkbox" id="python" class="switch">
-          </label>
-        </fieldset>
-        <p class="hint" data-i18n="tools_help"></p>
-        <button id="install" class="primary" disabled><span data-i18n="install"></span><span>→</span></button>
-        <p id="installation" class="installation" data-i18n="not_installed"></p>
-        <div class="remove-profile"><button id="remove" class="compact danger" data-i18n="remove_profile" disabled></button><p id="remove-help" class="hint" data-i18n="remove_help" hidden></p></div>
-      </section>
-      <section class="panel test-panel">
-        <div class="section-heading"><span class="section-number">02</span><h2 data-i18n="test_section"></h2></div>
-        <p class="section-description" data-i18n="test_help"></p>
-        <label class="field-label" for="prompt" data-i18n="your_message"></label>
-        <textarea id="prompt" rows="3" maxlength="32000" disabled></textarea>
-        <button id="test" class="secondary" data-i18n="test_start" disabled></button>
-        <div id="test-output" class="test-output" hidden>
-          <div class="reply-heading"><span class="reply-dot"></span><span data-i18n="model_reply"></span></div>
-          <p id="test-status" class="test-status"></p>
-          <div id="reply" class="reply"></div>
-          <p id="test-memory" class="test-status" hidden></p>
-        </div>
-      </section>
-    </div>
+    <section id="detail" hidden>
+      <div id="preview-navigation" class="detail-heading" hidden><button id="back" class="compact" data-i18n="back"></button><h1 id="detail-title"></h1></div>
+      <p id="detail-notice" class="notice" hidden></p>
+      <div id="editor" class="panels">
+        <section class="panel settings-panel">
+          <div class="section-heading"><span class="section-number">01</span><h2 data-i18n="settings"></h2></div>
+          <label class="field-label" for="backend" data-i18n="backend"></label>
+          <select id="backend" disabled><option value="apple_fm" data-i18n="apple_backend"></option><option value="mlx_lm">MLX-LM</option></select>
+          <div id="availability" class="availability" data-kind="checking"><span class="status-dot"></span><span id="availability-text" data-i18n="checking"></span></div>
+          <label class="field-label" for="name" data-i18n="connection_name"></label>
+          <input id="name" type="text" autocomplete="off" spellcheck="false" disabled>
+          <div id="mlx-settings" class="model-field" hidden>
+            <label class="field-label" for="model-id" data-i18n="model_id"></label>
+            <input id="model-id" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" disabled>
+            <p class="hint" data-i18n="model_help"></p>
+            <p class="model-notice" data-i18n="mlx_device_warning"></p>
+          </div>
+          <fieldset id="tools" disabled>
+            <legend data-i18n="tools"></legend>
+            <label class="tool-row">
+              <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7M8 14h8M8 17h5"/></svg></span>
+              <span class="tool-copy"><span class="tool-name" data-i18n="files"></span><span class="tool-description" data-i18n="files_help"></span></span>
+              <input type="checkbox" id="files" class="switch" checked>
+            </label>
+            <label class="tool-row">
+              <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></svg></span>
+              <span class="tool-copy"><span class="tool-name" data-i18n="browser"></span><span class="tool-description" data-i18n="browser_help"></span></span>
+              <input type="checkbox" id="browser" class="switch">
+            </label>
+            <label class="tool-row">
+              <span class="tool-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></svg></span>
+              <span class="tool-copy"><span class="tool-name" data-i18n="python"></span><span class="tool-description" data-i18n="python_help"></span></span>
+              <input type="checkbox" id="python" class="switch">
+            </label>
+          </fieldset>
+          <p class="hint" data-i18n="tools_help"></p>
+          <button id="install" class="primary" disabled><span data-i18n="install"></span><span>→</span></button>
+        </section>
+        <section class="panel test-panel">
+          <div class="section-heading"><span class="section-number">02</span><h2 data-i18n="test_section"></h2></div>
+          <p class="section-description" data-i18n="test_help"></p>
+          <label class="field-label" for="prompt" data-i18n="your_message"></label>
+          <textarea id="prompt" rows="3" maxlength="32000" disabled></textarea>
+          <button id="test" class="secondary" data-i18n="test_start" disabled></button>
+          <div id="test-output" class="test-output" hidden>
+            <div class="reply-heading"><span class="reply-dot"></span><span data-i18n="model_reply"></span></div>
+            <p id="test-status" class="test-status"></p>
+            <div id="reply" class="reply"></div>
+            <p id="test-memory" class="test-status" hidden></p>
+          </div>
+        </section>
+      </div>
+    </section>
   </main>
   <script>/* SCRIPT */</script>
 </body>

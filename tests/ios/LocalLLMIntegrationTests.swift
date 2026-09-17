@@ -39,7 +39,6 @@ final class LocalLLMIntegrationTests: XCTestCase {
             state.root = \(rootLiteral)
             state.directory = tempfile.TemporaryDirectory(prefix='pythona_local_llm_test_')
             state.store = SettingsStore(Path(state.directory.name) / 'settings.local.json')
-            state.store.value['name'] = 'Local LLM Test'
             with socket.socket() as sock:
                 sock.bind(('127.0.0.1', 0))
                 state.store.service['port'] = sock.getsockname()[1]
@@ -52,7 +51,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
                     state.host.process_next()
             state.thread = threading.Thread(target=pump, daemon=True)
             state.thread.start()
-            state.app.check_availability()
+            state.app.refresh_installations()
             """)
             XCTAssertTrue(opened.succeeded, opened.output)
             guard opened.succeeded else { await cleanup(engine); return }
@@ -76,22 +75,35 @@ final class LocalLLMIntegrationTests: XCTestCase {
                 attachment.lifetime = .keepAlways
                 add(attachment)
             }
-            try await wait(web, "document.documentElement.dataset.ready === 'true'")
-            try await wait(web, "document.getElementById('availability').dataset.kind === 'unavailable'")
+            try await waitPage(web, "home")
             controller.view.layoutIfNeeded()
             XCTAssertGreaterThan(web.scrollView.adjustedContentInset.top, 0)
             try await Task.sleep(for: .milliseconds(300))
-            capture("Web settings · Native navigation title")
+            capture("Provider home · Empty list")
+            _ = try await web.evaluateJavaScript("document.getElementById('new').click()")
+            try await waitPage(web, "new")
+            XCTAssertEqual(controller.title, "Add Provider")
+            XCTAssertNil(controller.navigationItem.rightBarButtonItem)
+            let cancel = try XCTUnwrap(controller.navigationItem.leftBarButtonItem)
+            XCTAssertEqual(cancel.title, "Cancel")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Discarded draft'")
+            XCTAssertTrue(UIApplication.shared.sendAction(try XCTUnwrap(cancel.action), to: cancel.target, from: cancel, for: nil))
+            try await waitPage(web, "home")
+            let count = try await web.evaluateJavaScript("document.querySelectorAll('.profile').length")
+            XCTAssertEqual(count as? Int, 0)
+            _ = try await web.evaluateJavaScript("document.getElementById('new').click()")
+            try await waitPage(web, "new")
+            try await wait(web, "document.getElementById('availability').dataset.kind === 'unavailable'")
             let filesEnabled = try await web.evaluateJavaScript("document.getElementById('files').checked")
             XCTAssertEqual(filesEnabled as? Bool, true)
-            _ = try await web.evaluateJavaScript("document.getElementById('install').click()")
-            try await wait(web, "!document.getElementById('install').disabled && document.getElementById('install').textContent.includes('Update')")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test'; document.getElementById('install').click()")
+            try await waitPage(web, "home")
             let saved = await engine.runCodeForAI(code: """
             import sys
             from ai_setup.settings import SettingsStore
             state = sys.modules['_local_llm_integration']
-            assert SettingsStore(state.store.path).value['provider_id'] == state.store.value['provider_id']
-            print(state.store.value['provider_id'])
+            assert SettingsStore(state.store.path).data['profiles'][0]['provider_id'] == state.store.data['profiles'][0]['provider_id']
+            print(state.store.data['profiles'][0]['provider_id'])
             """)
             XCTAssertTrue(saved.succeeded, saved.output)
             let id = saved.output.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -123,7 +135,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             from ai_setup.settings import provider_settings
             state = sys.modules['_local_llm_integration']
             runtime = load_backend()
-            runtime['service_json'](provider_settings(state.store.value, state.store.service), '/shutdown', method='POST')
+            runtime['service_json'](provider_settings(state.store.data['profiles'][0], state.store.service), '/shutdown', method='POST')
             async def schemas():
                 async def unused(name, arguments):
                     raise AssertionError('Unexpected tool execution')
@@ -142,7 +154,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
                     assert json.loads(result) == {'content': 'print(1)', 'failed': False}
                     yield {'type': 'text', 'delta': 'File read 😀'}
                 yield {'type': 'finish', 'reason': 'stop'}
-            settings = provider_settings(state.store.value, state.store.service)
+            settings = provider_settings(state.store.data['profiles'][0], state.store.service)
             settings['port'] = 0
             state.service = runtime['LocalModelService'](settings, backend_bundle()[1], backend=backend,
                 status=lambda: {'available': False, 'reason': 'DEVICE_NOT_ELIGIBLE'}).start()
@@ -150,10 +162,15 @@ final class LocalLLMIntegrationTests: XCTestCase {
                 state.store.service['port'] = state.service.port
             """)
             XCTAssertTrue(mocked.succeeded, mocked.output)
+            _ = try await web.evaluateJavaScript("document.querySelector('.profile').click()")
+            try await waitPage(web, "edit")
+            XCTAssertEqual(controller.title, "Edit Provider")
             _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test Updated'; document.getElementById('install').click()")
-            try await wait(web, "!document.getElementById('install').disabled")
+            try await waitPage(web, "home")
             let updated = try XCTUnwrap(AIConfigStore.config(id: id))
             XCTAssertEqual(updated.name, "Local LLM Test Updated")
+            _ = try await web.evaluateJavaScript("document.querySelector('.profile').click()")
+            try await waitPage(web, "edit")
             _ = try await web.evaluateJavaScript("document.getElementById('test').click()")
             try await wait(web, "document.getElementById('reply').textContent.includes('Model test received')")
             let first = try await events(updated, tools: tools, records: transcript)
@@ -179,40 +196,55 @@ final class LocalLLMIntegrationTests: XCTestCase {
             try await wait(web, "window.scrollY > 0 && document.getElementById('reply').getBoundingClientRect().bottom <= window.visualViewport.height + window.visualViewport.offsetTop")
             try await Task.sleep(for: .milliseconds(150))
             capture("Web settings · Test conversation")
-            // Multiple installed profiles must remain independent, including deletion in the App.
-            _ = try await web.evaluateJavaScript("document.getElementById('new-backend').value = 'mlx_lm'; document.getElementById('new').click()")
-            try await wait(web, "!document.getElementById('mlx-settings').hidden && !document.getElementById('new').disabled")
+            // Add and edit another backend, then verify real deletion from the App.
+            _ = try await web.evaluateJavaScript("void window.setupBridge.back()")
+            try await waitPage(web, "home")
+            _ = try await web.evaluateJavaScript("document.getElementById('new').click()")
+            try await waitPage(web, "new")
+            _ = try await web.evaluateJavaScript("document.getElementById('backend').value = 'mlx_lm'; document.getElementById('backend').dispatchEvent(new Event('change'))")
+            try await wait(web, "!document.getElementById('mlx-settings').hidden && !document.getElementById('install').disabled")
             let modelID = try await web.evaluateJavaScript("document.getElementById('model-id').value")
             XCTAssertEqual(modelID as? String, "mlx-community/Qwen3-1.7B-4bit")
+            try await Task.sleep(for: .milliseconds(200))
+            capture("Add provider · MLX")
             _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test MLX'; document.getElementById('install').click()")
-            try await wait(web, "!document.getElementById('install').disabled && document.getElementById('install').textContent.includes('Update')")
+            try await waitPage(web, "home")
             let mlx = try XCTUnwrap(AIConfigStore.all().first(where: { $0.name == "Local LLM Test MLX" }))
             XCTAssertNotEqual(mlx.id, id)
-            let mlxSettings = try XCTUnwrap(JSFileLocalStorage.snapshot(namespace: mlx.id)["local_model_settings"])
-            XCTAssertTrue(mlxSettings.contains("mlx-community/Qwen3-1.7B-4bit"))
+            XCTAssertTrue(JSFileLocalStorage.snapshot(namespace: mlx.id)["local_model_settings"]?.contains("mlx-community/Qwen3-1.7B-4bit") == true)
+            try await Task.sleep(for: .milliseconds(200))
+            capture("Provider home · Installed models")
+            _ = try await web.evaluateJavaScript("document.querySelectorAll('.profile')[1].click()")
+            try await waitPage(web, "edit")
             _ = try await web.evaluateJavaScript("document.getElementById('model-id').value = 'example/another-model'; document.getElementById('install').click()")
-            try await wait(web, "!document.getElementById('install').disabled")
-            let changedMLX = try XCTUnwrap(AIConfigStore.config(id: mlx.id))
-            XCTAssertTrue(JSFileLocalStorage.snapshot(namespace: changedMLX.id)["local_model_settings"]?.contains("example/another-model") == true)
+            try await waitPage(web, "home")
+            XCTAssertTrue(JSFileLocalStorage.snapshot(namespace: mlx.id)["local_model_settings"]?.contains("example/another-model") == true)
             XCTAssertEqual(AIConfigStore.config(id: id)?.name, "Local LLM Test Updated")
+            _ = try await web.evaluateJavaScript("document.querySelectorAll('.profile')[1].click()")
+            try await waitPage(web, "edit")
             AIConfigStore.delete(mlx.id)
-            _ = try await web.evaluateJavaScript("document.getElementById('refresh').click()")
-            try await wait(web, "!document.getElementById('refresh').disabled && document.getElementById('install').textContent.includes('Add to')")
             _ = try await web.evaluateJavaScript("document.getElementById('install').click()")
-            try await wait(web, "!document.getElementById('install').disabled && document.getElementById('install').textContent.includes('Update')")
+            try await waitPage(web, "home")
             let replacement = try XCTUnwrap(AIConfigStore.all().first(where: { $0.name == "Local LLM Test MLX" }))
             XCTAssertNotEqual(replacement.id, mlx.id)
-            _ = try await web.evaluateJavaScript("window.scrollTo(0, 0)")
-            try await Task.sleep(for: .milliseconds(300))
-            capture("Web settings · Apple and MLX configurations")
+            AIConfigStore.delete(replacement.id)
+            _ = try await web.evaluateJavaScript("document.getElementById('refresh').click()")
+            try await wait(web, "document.querySelectorAll('.profile').length === 1 && !document.getElementById('refresh').disabled")
             _ = try await web.evaluateJavaScript("document.querySelector('.profile').click()")
-            try await wait(web, "document.getElementById('mlx-settings').hidden && !document.getElementById('install').disabled")
-            // Native Done must preserve uncommitted form edits and keep invalid forms open.
-            _ = try await web.evaluateJavaScript("document.getElementById('name').value = ''")
-            XCTAssertTrue(UIApplication.shared.sendAction(doneAction, to: done.target, from: done, for: nil))
+            try await waitPage(web, "edit")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Discarded edit'")
+            let back = try XCTUnwrap(controller.navigationItem.leftBarButtonItem)
+            XCTAssertTrue(UIApplication.shared.sendAction(try XCTUnwrap(back.action), to: back.target, from: back, for: nil))
+            try await waitPage(web, "home")
+            XCTAssertEqual(AIConfigStore.config(id: id)?.name, "Local LLM Test Updated")
+            _ = try await web.evaluateJavaScript("document.querySelector('.profile').click()")
+            try await waitPage(web, "edit")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = ''; document.getElementById('install').click()")
             try await wait(web, "!document.getElementById('error').hidden")
-            XCTAssertNotNil(navigation.presentingViewController)
-            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test Draft'")
+            XCTAssertEqual(controller.title, "Edit Provider")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test Final'; document.getElementById('install').click()")
+            try await waitPage(web, "home")
+            XCTAssertEqual(AIConfigStore.config(id: id)?.name, "Local LLM Test Final")
             XCTAssertTrue(UIApplication.shared.sendAction(doneAction, to: done.target, from: done, for: nil))
             for _ in 0..<30 where navigation.presentingViewController != nil {
                 try await Task.sleep(for: .milliseconds(100))
@@ -229,9 +261,9 @@ final class LocalLLMIntegrationTests: XCTestCase {
             import sys
             from ai_setup.settings import SettingsStore
             state = sys.modules['_local_llm_integration']
-            saved = SettingsStore(state.store.path).value
-            assert saved['name'] == 'Local LLM Test Draft'
-            assert saved['provider_id'] == state.store.value['provider_id']
+            saved = SettingsStore(state.store.path).data['profiles'][0]
+            assert saved['name'] == 'Local LLM Test Final'
+            assert saved['provider_id'] == state.store.data['profiles'][0]['provider_id']
             assert state.app.closed.is_set() and all(job['cancelled'].is_set() for job in state.app.jobs.values())
             """)
             XCTAssertTrue(closed.succeeded, closed.output)
@@ -240,6 +272,10 @@ final class LocalLLMIntegrationTests: XCTestCase {
             throw error
         }
         await cleanup(engine)
+    }
+
+    private func waitPage(_ web: WKWebView, _ page: String) async throws {
+        try await wait(web, "document.documentElement.dataset.page === '\(page)' && !document.getElementById('new').disabled")
     }
 
     private func wait(_ web: WKWebView, _ expression: String) async throws {
@@ -274,7 +310,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             with contextlib.suppress(Exception):
                 from ai_setup.bundle import load_backend
                 from ai_setup.settings import provider_settings
-                load_backend()['service_json'](provider_settings(state.store.value, state.store.service), '/shutdown', method='POST')
+                load_backend()['service_json'](state.store.service, '/shutdown', method='POST')
             state.directory.cleanup()
             sys.path[:] = [path for path in sys.path if path != state.root]
         """)

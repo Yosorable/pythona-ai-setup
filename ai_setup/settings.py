@@ -79,8 +79,7 @@ def provider_settings(settings, service):
 class SettingsStore:
     def __init__(self, path=STATE_PATH):
         self.path = Path(path)
-        profile = defaults()
-        self.data = {"selected_id": profile["id"], "service": service_defaults(), "profiles": [profile]}
+        self.data = {"service": service_defaults(), "profiles": []}
         try:
             saved = json.loads(self.path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -91,22 +90,18 @@ class SettingsStore:
 
     @staticmethod
     def _validate(data):
-        if not isinstance(data, dict) or set(data) != {"selected_id", "service", "profiles"}:
+        if not isinstance(data, dict) or set(data) != {"service", "profiles"}:
             raise ValueError("Invalid settings file structure")
         if not isinstance(data["profiles"], list):
             raise ValueError("Profiles must be an array")
         profiles = [validate(value) for value in data["profiles"]]
+        if any(not value["provider_id"] for value in profiles):
+            raise ValueError("Saved profiles must have an installed provider ID")
         ids = [value["id"] for value in profiles]
-        installed = [value["provider_id"] for value in profiles if value["provider_id"]]
+        installed = [value["provider_id"] for value in profiles]
         if len(ids) != len(set(ids)) or len(installed) != len(set(installed)):
             raise ValueError("Duplicate profile or provider IDs")
-        if (profiles and data["selected_id"] not in ids) or (not profiles and data["selected_id"] is not None):
-            raise ValueError("Invalid selected profile")
-        return {"selected_id": data["selected_id"], "service": validate_service(data["service"]), "profiles": profiles}
-
-    @property
-    def value(self):
-        return self.get(self.data["selected_id"]) if self.data["selected_id"] is not None else None
+        return {"service": validate_service(data["service"]), "profiles": profiles}
 
     @property
     def service(self):
@@ -118,32 +113,19 @@ class SettingsStore:
                 return profile
         raise KeyError("The configuration no longer exists")
 
-    def add(self, backend):
-        profile = defaults(backend)
-        self.data["profiles"].append(profile)
-        self.data["selected_id"] = profile["id"]
-        self.save()
-        return profile
-
-    def select(self, profile_id):
-        self.get(profile_id)
-        self.data["selected_id"] = profile_id
-        self.save()
-
-    def remove(self, profile_id):
-        if self.get(profile_id)["provider_id"]:
-            raise ValueError("Remove this provider in Pythona's AI Assistant settings first")
-        self.data["profiles"] = [value for value in self.data["profiles"] if value["id"] != profile_id]
-        if self.data["selected_id"] == profile_id:
-            self.data["selected_id"] = self.data["profiles"][0]["id"] if self.data["profiles"] else None
+    def remove(self, profile_ids):
+        self.data["profiles"] = [value for value in self.data["profiles"] if value["id"] not in profile_ids]
         self.save()
 
     def save(self, value=None):
         # Retain installed IDs in memory if writing the local record fails.
         if value is not None:
             value = validate(value)
-            self.get(value["id"])
-            self.data["profiles"] = [value if profile["id"] == value["id"] else profile for profile in self.data["profiles"]]
+            profiles = self.data["profiles"]
+            if any(profile["id"] == value["id"] for profile in profiles):
+                self.data["profiles"] = [value if profile["id"] == value["id"] else profile for profile in profiles]
+            else:
+                profiles.append(value)
         self.data = self._validate(self.data)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         descriptor, temporary = tempfile.mkstemp(prefix=".settings-", dir=self.path.parent)
@@ -165,8 +147,8 @@ def install(store, settings, ai=None):
     if ai is None:
         from pythona import ai
     value = validate(settings)
-    value["provider_id"] = store.get(value["id"])["provider_id"]
-    store.save(value)
+    saved = next((profile for profile in store.data["profiles"] if profile["id"] == value["id"]), None)
+    value["provider_id"] = saved["provider_id"] if saved else value["provider_id"]
     runtime = provider_settings(value, store.service)
     script = build_provider(runtime)
     provider_id = value["provider_id"]
@@ -181,9 +163,9 @@ def install(store, settings, ai=None):
         ai.update_custom_provider(provider_id, name=value["name"], js_code=script, local_storage=storage)
     else:
         provider_id = ai.create_custom_provider(name=value["name"], js_code=script, local_storage=storage)
-    store.get(value["id"])["provider_id"] = provider_id
+    value["provider_id"] = provider_id
     try:
-        store.save()
+        store.save(value)
     except OSError as error:
         raise RuntimeError(f"Provider saved, but the local record could not be written. Keep this ID: {provider_id}\n{error}") from error
     return provider_id

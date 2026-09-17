@@ -47,11 +47,11 @@ class InstallTests(unittest.TestCase):
             path = Path(directory) / "settings.json"
             store = SettingsStore(path)
             ai = FakeAI()
-            provider_id = install(store, store.value, ai)
+            provider_id = install(store, defaults(), ai)
             ai.providers[provider_id]["local_storage"]["user_owned"] = "preserve"
             store = SettingsStore(path)
-            self.assertEqual(store.value["provider_id"], provider_id)
-            changed = copy.deepcopy(store.value)
+            self.assertEqual(store.data["profiles"][0]["provider_id"], provider_id)
+            changed = copy.deepcopy(store.data["profiles"][0])
             changed["name"] = "测试连接 😀"
             changed["groups"]["files"] = True
             self.assertEqual(install(store, changed, ai), provider_id)
@@ -68,30 +68,21 @@ class InstallTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(Path(directory) / "settings.json")
             ai = FakeAI()
-            original = install(store, store.value, ai)
+            original = install(store, defaults(), ai)
             del ai.providers[original]
-            replacement = install(store, store.value, ai)
+            replacement = install(store, store.data["profiles"][0], ai)
             self.assertNotEqual(original, replacement)
-            self.assertEqual(SettingsStore(store.path).value["provider_id"], replacement)
+            self.assertEqual(SettingsStore(store.path).data["profiles"][0]["provider_id"], replacement)
 
     def test_failed_final_save_keeps_id_for_retry(self):
         with tempfile.TemporaryDirectory() as directory:
             store = SettingsStore(Path(directory) / "settings.json")
             ai = FakeAI()
-            real_save = store.save
-            count = 0
-
-            def save(value=None):
-                nonlocal count
-                count += 1
-                if count == 2:
-                    raise OSError("磁盘写入失败")
-                real_save(value)
-
-            with patch.object(store, "save", side_effect=save):
+            draft = defaults()
+            with patch('ai_setup.settings.os.replace', side_effect=OSError('Disk full')):
                 with self.assertRaisesRegex(RuntimeError, "provider-1"):
-                    install(store, store.value, ai)
-            self.assertEqual(install(store, store.value, ai), "provider-1")
+                    install(store, draft, ai)
+            self.assertEqual(install(store, draft, ai), "provider-1")
             self.assertEqual(ai.created, 1)
 
     def test_corrupt_state_is_not_silently_replaced(self):
