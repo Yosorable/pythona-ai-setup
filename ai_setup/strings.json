@@ -51,7 +51,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "Add Configuration",
     "model_id": "Hugging Face Model ID",
-    "model_help": "The first test or assistant request installs mlx-lm if needed and downloads this model. The default Qwen model is about 1 GB. Models are released after each request.",
+    "model_help": "The first test or assistant request installs mlx-lm if needed and downloads this model. The default Qwen model is about 1 GB. Only one conversation can run at a time. The model stays loaded until you switch models or the service shuts down after being idle.",
     "invalid_model_id": "Enter a Hugging Face model ID in the form owner/model.",
     "remove_profile": "Remove Configuration",
     "remove_help": "Delete this provider in Pythona’s AI Assistant settings, then refresh this list to remove its saved configuration.",
@@ -63,7 +63,7 @@
     "provider_check_failed": "Could not check the installed provider: {error}",
     "mlx_ready": "MLX is available. The model will load when you test or use it.",
     "reason_MLX_UNAVAILABLE": "MLX is not available in this Python environment.",
-    "mlx_memory": "MLX memory · Process peak: {peak:.1f} MB · Active after cleanup: {active:.1f} MB · Cache: {cache:.1f} MB",
+    "mlx_memory": "MLX memory · Process peak: {peak:.1f} MB · Active, including loaded model: {active:.1f} MB · Cache: {cache:.1f} MB",
     "mlx_device_warning": "On older devices, MLX may report a compatibility error and be unable to run the model. Model support also depends on available memory. Memory use can grow over multiple conversation turns; if it exceeds iOS limits, Pythona may close unexpectedly."
   },
   "zh-Hans": {
@@ -118,7 +118,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "添加配置",
     "model_id": "Hugging Face 模型 ID",
-    "model_help": "首次测试或助手调用时会按需安装 mlx-lm 并下载模型。默认 Qwen 模型约 1 GB。每次请求结束后释放模型。",
+    "model_help": "首次测试或助手调用时会按需安装 mlx-lm 并下载模型。默认 Qwen 模型约 1 GB。同一时间只能进行一个对话。模型会保留在内存中，切换模型或服务空闲关闭后释放。",
     "invalid_model_id": "请输入 owner/model 格式的 Hugging Face 模型 ID。",
     "remove_profile": "移除配置",
     "remove_help": "请先在 Pythona 的 AI 助手设置中删除此 provider，再刷新列表以移除保存的配置。",
@@ -130,7 +130,7 @@
     "provider_check_failed": "无法核对已安装的 provider：{error}",
     "mlx_ready": "MLX 可用。测试或使用时会加载模型。",
     "reason_MLX_UNAVAILABLE": "当前 Python 环境不支持 MLX。",
-    "mlx_memory": "MLX 内存 · 进程峰值：{peak:.1f} MB · 清理后使用：{active:.1f} MB · 缓存：{cache:.1f} MB",
+    "mlx_memory": "MLX 内存 · 进程峰值：{peak:.1f} MB · 当前使用（含已加载模型）：{active:.1f} MB · 缓存：{cache:.1f} MB",
     "mlx_device_warning": "受 MLX 的设备支持限制，较旧的设备可能会报错，无法运行模型。模型运行也取决于可用内存。多轮对话可能增加内存占用，超过 iOS 的内存限制时，Pythona 可能意外退出。"
   },
   "zh-Hant": {
@@ -185,7 +185,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "新增設定",
     "model_id": "Hugging Face 模型 ID",
-    "model_help": "首次測試或助手呼叫時會視需要安裝 mlx-lm 並下載模型。預設 Qwen 模型約 1 GB。每次請求結束後釋放模型。",
+    "model_help": "首次測試或助手呼叫時會視需要安裝 mlx-lm 並下載模型。預設 Qwen 模型約 1 GB。同一時間只能進行一個對話。模型會保留在記憶體中，切換模型或服務閒置關閉後釋放。",
     "invalid_model_id": "請輸入 owner/model 格式的 Hugging Face 模型 ID。",
     "remove_profile": "移除設定",
     "remove_help": "請先在 Pythona 的 AI 助手設定中刪除此 provider，再重新整理列表以移除儲存的設定。",
@@ -197,7 +197,7 @@
     "provider_check_failed": "無法確認已安裝的 provider：{error}",
     "mlx_ready": "MLX 可用。測試或使用時會載入模型。",
     "reason_MLX_UNAVAILABLE": "目前 Python 環境不支援 MLX。",
-    "mlx_memory": "MLX 記憶體 · 處理程序峰值：{peak:.1f} MB · 清理後使用：{active:.1f} MB · 快取：{cache:.1f} MB",
+    "mlx_memory": "MLX 記憶體 · 處理程序峰值：{peak:.1f} MB · 目前使用（含已載入模型）：{active:.1f} MB · 快取：{cache:.1f} MB",
     "mlx_device_warning": "受 MLX 的裝置支援限制，較舊的裝置可能會出現錯誤，無法執行模型。模型執行也取決於可用記憶體。多輪對話可能增加記憶體用量，超過 iOS 的記憶體限制時，Pythona 可能意外結束。"
   },
   "de": {
@@ -252,7 +252,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "Konfiguration hinzufügen",
     "model_id": "Hugging-Face-Modell-ID",
-    "model_help": "Beim ersten Test oder bei der ersten Assistentenanfrage werden bei Bedarf mlx-lm installiert und das Modell heruntergeladen. Das voreingestellte Qwen-Modell ist etwa 1 GB groß. Modelle werden nach jeder Anfrage freigegeben.",
+    "model_help": "Beim ersten Test oder bei der ersten Assistentenanfrage werden bei Bedarf mlx-lm installiert und das Modell heruntergeladen. Das voreingestellte Qwen-Modell ist etwa 1 GB groß. Es kann nur ein Gespräch gleichzeitig laufen. Das Modell bleibt geladen, bis du das Modell wechselst oder der Dienst nach Inaktivität beendet wird.",
     "invalid_model_id": "Gib eine Hugging-Face-Modell-ID im Format owner/model ein.",
     "remove_profile": "Konfiguration entfernen",
     "remove_help": "Lösche diesen Anbieter in den KI-Assistenteneinstellungen von Pythona. Aktualisiere dann diese Liste, um die gespeicherte Konfiguration zu entfernen.",
@@ -264,7 +264,7 @@
     "provider_check_failed": "Der installierte Anbieter konnte nicht geprüft werden: {error}",
     "mlx_ready": "MLX ist verfügbar. Das Modell wird beim Testen oder Verwenden geladen.",
     "reason_MLX_UNAVAILABLE": "MLX ist in dieser Python-Umgebung nicht verfügbar.",
-    "mlx_memory": "MLX-Speicher · Prozessmaximum: {peak:.1f} MB · Aktiv nach Bereinigung: {active:.1f} MB · Cache: {cache:.1f} MB",
+    "mlx_memory": "MLX-Speicher · Prozessmaximum: {peak:.1f} MB · Aktiv, einschließlich geladenem Modell: {active:.1f} MB · Cache: {cache:.1f} MB",
     "mlx_device_warning": "Auf älteren Geräten kann MLX wegen fehlender Geräteunterstützung einen Fehler melden und das Modell nicht ausführen. Auch der verfügbare Arbeitsspeicher spielt eine Rolle. Bei längeren Gesprächen kann der Speicherbedarf steigen. Werden die iOS-Speichergrenzen überschritten, kann Pythona unerwartet beendet werden."
   },
   "es": {
@@ -319,7 +319,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "Añadir configuración",
     "model_id": "ID del modelo de Hugging Face",
-    "model_help": "La primera prueba o solicitud del asistente instala mlx-lm si hace falta y descarga el modelo. El modelo Qwen predeterminado ocupa aproximadamente 1 GB. Los modelos se liberan después de cada solicitud.",
+    "model_help": "La primera prueba o solicitud del asistente instala mlx-lm si hace falta y descarga el modelo. El modelo Qwen predeterminado ocupa aproximadamente 1 GB. Solo puede ejecutarse una conversación a la vez. El modelo permanece cargado hasta que cambies de modelo o el servicio se cierre por inactividad.",
     "invalid_model_id": "Introduce un ID de modelo de Hugging Face con el formato owner/model.",
     "remove_profile": "Eliminar configuración",
     "remove_help": "Elimina este proveedor en los ajustes del asistente de IA de Pythona y actualiza esta lista para eliminar su configuración guardada.",
@@ -331,7 +331,7 @@
     "provider_check_failed": "No se pudo comprobar el proveedor instalado: {error}",
     "mlx_ready": "MLX está disponible. El modelo se cargará al probarlo o usarlo.",
     "reason_MLX_UNAVAILABLE": "MLX no está disponible en este entorno de Python.",
-    "mlx_memory": "Memoria de MLX · Pico del proceso: {peak:.1f} MB · Activa tras la limpieza: {active:.1f} MB · Caché: {cache:.1f} MB",
+    "mlx_memory": "Memoria de MLX · Pico del proceso: {peak:.1f} MB · Activa, incluido el modelo cargado: {active:.1f} MB · Caché: {cache:.1f} MB",
     "mlx_device_warning": "En dispositivos antiguos, MLX puede mostrar un error de compatibilidad e impedir la ejecución del modelo. El funcionamiento también depende de la memoria disponible. El uso de memoria puede aumentar tras varios turnos de conversación; si supera los límites de iOS, Pythona puede cerrarse inesperadamente."
   },
   "fr": {
@@ -386,7 +386,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "Ajouter une configuration",
     "model_id": "Identifiant du modèle Hugging Face",
-    "model_help": "Le premier test ou la première requête de l’assistant installe mlx-lm si nécessaire et télécharge le modèle. Le modèle Qwen par défaut fait environ 1 Go. Les modèles sont libérés après chaque requête.",
+    "model_help": "Le premier test ou la première requête de l’assistant installe mlx-lm si nécessaire et télécharge le modèle. Le modèle Qwen par défaut fait environ 1 Go. Une seule conversation peut être active à la fois. Le modèle reste chargé jusqu’au changement de modèle ou à l’arrêt du service après une période d’inactivité.",
     "invalid_model_id": "Saisissez un identifiant de modèle Hugging Face au format owner/model.",
     "remove_profile": "Supprimer la configuration",
     "remove_help": "Supprimez ce fournisseur dans les réglages de l’assistant IA de Pythona, puis actualisez cette liste pour retirer sa configuration enregistrée.",
@@ -398,7 +398,7 @@
     "provider_check_failed": "Impossible de vérifier le fournisseur installé : {error}",
     "mlx_ready": "MLX est disponible. Le modèle sera chargé lors du test ou de son utilisation.",
     "reason_MLX_UNAVAILABLE": "MLX n’est pas disponible dans cet environnement Python.",
-    "mlx_memory": "Mémoire MLX · Pic du processus : {peak:.1f} Mo · Active après nettoyage : {active:.1f} Mo · Cache : {cache:.1f} Mo",
+    "mlx_memory": "Mémoire MLX · Pic du processus : {peak:.1f} Mo · Active, modèle chargé inclus : {active:.1f} Mo · Cache : {cache:.1f} Mo",
     "mlx_device_warning": "Sur les appareils plus anciens, MLX peut signaler une erreur de compatibilité et empêcher l’exécution du modèle. Le fonctionnement dépend aussi de la mémoire disponible. L’utilisation de la mémoire peut augmenter au fil des échanges. Si elle dépasse les limites d’iOS, Pythona peut se fermer de manière inattendue."
   },
   "ja": {
@@ -453,7 +453,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "設定を追加",
     "model_id": "Hugging Face モデル ID",
-    "model_help": "最初のテストまたはアシスタントへのリクエスト時に、必要に応じて mlx-lm をインストールし、モデルをダウンロードします。既定の Qwen モデルは約 1 GB です。各リクエストの終了後にモデルを解放します。",
+    "model_help": "最初のテストまたはアシスタントへのリクエスト時に、必要に応じて mlx-lm をインストールし、モデルをダウンロードします。既定の Qwen モデルは約 1 GB です。同時に実行できる会話は1つです。モデルの切り替え時、または非アクティブな状態が続いてサービスが終了した時にモデルを解放します。",
     "invalid_model_id": "owner/model 形式の Hugging Face モデル ID を入力してください。",
     "remove_profile": "設定を削除",
     "remove_help": "Pythona の AI アシスタント設定でこのプロバイダーを削除し、一覧を再読み込みすると、保存済みの設定を削除できます。",
@@ -465,7 +465,7 @@
     "provider_check_failed": "インストール済みプロバイダーを確認できませんでした：{error}",
     "mlx_ready": "MLX を利用できます。テストまたは使用時にモデルを読み込みます。",
     "reason_MLX_UNAVAILABLE": "この Python 環境では MLX を利用できません。",
-    "mlx_memory": "MLX メモリ · プロセスのピーク：{peak:.1f} MB · 解放後の使用量：{active:.1f} MB · キャッシュ：{cache:.1f} MB",
+    "mlx_memory": "MLX メモリ · プロセスのピーク：{peak:.1f} MB · 使用中（読み込み済みモデルを含む）：{active:.1f} MB · キャッシュ：{cache:.1f} MB",
     "mlx_device_warning": "古いデバイスでは、MLX の対応制限によりエラーが発生し、モデルを実行できない場合があります。実行には十分なメモリも必要です。会話を重ねるとメモリ使用量が増え、iOS の制限を超えた場合、Pythona が予期せず終了する可能性があります。"
   },
   "ko": {
@@ -520,7 +520,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "구성 추가",
     "model_id": "Hugging Face 모델 ID",
-    "model_help": "첫 테스트나 어시스턴트 요청 시 필요한 경우 mlx-lm을 설치하고 모델을 다운로드합니다. 기본 Qwen 모델은 약 1 GB입니다. 각 요청이 끝나면 모델을 해제합니다.",
+    "model_help": "첫 테스트나 어시스턴트 요청 시 필요한 경우 mlx-lm을 설치하고 모델을 다운로드합니다. 기본 Qwen 모델은 약 1 GB입니다. 한 번에 하나의 대화만 진행할 수 있습니다. 모델을 전환하거나 유휴 상태로 서비스가 종료될 때까지 모델을 메모리에 유지합니다.",
     "invalid_model_id": "owner/model 형식의 Hugging Face 모델 ID를 입력하세요.",
     "remove_profile": "구성 삭제",
     "remove_help": "Pythona AI 어시스턴트 설정에서 이 제공자를 삭제한 후 목록을 새로 고치면 저장된 구성을 삭제할 수 있습니다.",
@@ -532,7 +532,7 @@
     "provider_check_failed": "설치된 제공자를 확인할 수 없습니다: {error}",
     "mlx_ready": "MLX를 사용할 수 있습니다. 테스트하거나 사용할 때 모델을 불러옵니다.",
     "reason_MLX_UNAVAILABLE": "이 Python 환경에서는 MLX를 사용할 수 없습니다.",
-    "mlx_memory": "MLX 메모리 · 프로세스 최대: {peak:.1f} MB · 정리 후 사용: {active:.1f} MB · 캐시: {cache:.1f} MB",
+    "mlx_memory": "MLX 메모리 · 프로세스 최대: {peak:.1f} MB · 사용 중(불러온 모델 포함): {active:.1f} MB · 캐시: {cache:.1f} MB",
     "mlx_device_warning": "구형 기기에서는 MLX의 기기 지원 제한으로 오류가 발생하여 모델을 실행하지 못할 수 있습니다. 실행 가능 여부는 사용 가능한 메모리에도 영향을 받습니다. 대화가 이어지면 메모리 사용량이 늘어날 수 있으며, iOS 제한을 초과하면 Pythona가 예기치 않게 종료될 수 있습니다."
   },
   "ru": {
@@ -587,7 +587,7 @@
     "apple_backend": "Apple Foundation Models",
     "new_profile": "Добавить конфигурацию",
     "model_id": "ID модели Hugging Face",
-    "model_help": "При первом тесте или запросе ассистента при необходимости устанавливается mlx-lm и загружается модель. Модель Qwen по умолчанию занимает около 1 ГБ. Модели освобождаются после каждого запроса.",
+    "model_help": "При первом тесте или запросе ассистента при необходимости устанавливается mlx-lm и загружается модель. Модель Qwen по умолчанию занимает около 1 ГБ. Одновременно может выполняться только один диалог. Модель остаётся в памяти до смены модели или завершения службы после периода бездействия.",
     "invalid_model_id": "Введите ID модели Hugging Face в формате owner/model.",
     "remove_profile": "Удалить конфигурацию",
     "remove_help": "Удалите этого провайдера в настройках ИИ-ассистента Pythona, затем обновите список, чтобы удалить сохранённую конфигурацию.",
@@ -599,7 +599,7 @@
     "provider_check_failed": "Не удалось проверить установленного провайдера: {error}",
     "mlx_ready": "MLX доступен. Модель будет загружена при тестировании или использовании.",
     "reason_MLX_UNAVAILABLE": "MLX недоступен в этой среде Python.",
-    "mlx_memory": "Память MLX · Пик процесса: {peak:.1f} МБ · Используется после очистки: {active:.1f} МБ · Кэш: {cache:.1f} МБ",
+    "mlx_memory": "Память MLX · Пик процесса: {peak:.1f} МБ · Используется, включая загруженную модель: {active:.1f} МБ · Кэш: {cache:.1f} МБ",
     "mlx_device_warning": "На старых устройствах MLX может сообщить об ошибке совместимости, из-за которой модель не запустится. Работа модели также зависит от доступной памяти. По мере продолжения диалога потребление памяти может расти. При превышении лимитов iOS приложение Pythona может неожиданно закрыться."
   }
 }

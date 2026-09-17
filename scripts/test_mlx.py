@@ -42,15 +42,27 @@ def main():
         async def invoke(name, arguments):
             raise AssertionError('No tools expected')
         async def main():
+            worker = namespace['MLXWorker']()
             results = []
-            for _ in range(2):
-                events = [event async for event in namespace['mlx_model_events'](request, invoke)]
-                assert events[-1]['type'] == 'finish', events
-                assert any(event.get('delta') for event in events), events
-                results.append(events[-1])
+            resident = None
+            try:
+                for _ in range(2):
+                    events = [event async for event in worker.events(request, invoke)]
+                    assert events[-1]['type'] == 'finish', events
+                    assert any(event.get('delta') for event in events), events
+                    if resident is not None:
+                        assert id(worker.model) == resident
+                    resident = id(worker.model)
+                    results.append(events[-1])
+            finally:
+                worker.close()
+                await worker.wait_closed()
+            assert worker.model is None
             assert results[-1]['memory']['cache'] == 0, results
             assert results[-1]['memory']['active'] <= results[0]['memory']['active'] + 4096, results
-            print(json.dumps({'real_mlx_tiny_qwen3': results}, indent=2))
+            assert mx.get_active_memory() < results[-1]['memory']['active']
+            print(json.dumps({'real_mlx_tiny_qwen3': results,
+                              'after_shutdown': {'active': mx.get_active_memory(), 'cache': mx.get_cache_memory()}}, indent=2))
         asyncio.run(main())
 
 

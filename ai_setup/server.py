@@ -15,6 +15,10 @@ PROTOCOL_VERSION = 3
 MAX_BODY = 4 * 1024 * 1024
 
 
+class ModelBusyError(RuntimeError):
+    pass
+
+
 class ModelRun:
     """Keep one SDK response alive across HTTP/native-tool round trips."""
 
@@ -66,6 +70,9 @@ class ModelRun:
                 future.cancel()
 
     async def cancel(self):
+        if self.closed:
+            await asyncio.gather(self.task, return_exceptions=True)
+            return
         self.closed = True
         for _, future in self.pending.values():
             future.cancel()
@@ -81,7 +88,8 @@ class LocalModelService:
     def __init__(self, settings, build_id, backend=None, status=None):
         self.settings = dict(settings)
         self.build_id = build_id
-        self.backend = backend or model_events
+        self.mlx = MLXWorker()
+        self.backend = backend or (lambda request, invoke: model_events(request, invoke, self.mlx))
         self.status = status or (lambda: {backend: model_status({"backend": backend}) for backend in ("apple_fm", "mlx_lm")})
         self.ready = threading.Event()
         self.closed = threading.Event()
@@ -91,7 +99,8 @@ class LocalModelService:
         self.port = settings["port"]
         self.connections = set()
         self.active = 0
-        self.runs = {}
+        self.run = None
+        self.admitting = False
 
     def start(self):
         self.thread = threading.Thread(target=self._thread_main,
@@ -135,24 +144,44 @@ class LocalModelService:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=0.25)
                 except TimeoutError:
                     now = self.loop.time()
-                    for run in list(self.runs.values()):
-                        if not run.attached and now - run.touched >= self.settings["request_seconds"]:
-                            await self._cancel_run(run)
-                    if not self.active and not self.runs and now - self.last_activity >= self.settings["idle_seconds"]:
+                    run = self.run
+                    if run is not None and not run.attached and now - run.touched >= self.settings["request_seconds"]:
+                        await self._cancel_run(run)
+                    if not self.active and self.run is None and not self.mlx.busy and now - self.last_activity >= self.settings["idle_seconds"]:
                         break
         finally:
+            self.mlx.close()
             listener.close()
             await listener.wait_closed()
             tasks = list(self.connections)
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
-            for run in list(self.runs.values()):
-                await self._cancel_run(run)
+            if self.run is not None:
+                await self._cancel_run(self.run)
+            await self.mlx.wait_closed()
 
     async def _cancel_run(self, run):
-        self.runs.pop(run.id, None)
         await run.cancel()
+        if self.run is run:
+            self.run = None
+
+    async def _new_run(self, request):
+        # Reserve admission before awaiting cancellation; new requests never queue here.
+        if self.admitting:
+            raise ModelBusyError("The local model is busy. Try again shortly.")
+        self.admitting = True
+        try:
+            if self.run is not None:
+                if self.run.owner != request["owner"]:
+                    raise ModelBusyError("The local model is busy with another conversation. Wait for it to finish and try again.")
+                await self._cancel_run(self.run)
+            if self.mlx.busy:
+                raise ModelBusyError("The previous model request is still stopping. Try again shortly.")
+            self.run = ModelRun(self, request)
+            return self.run
+        finally:
+            self.admitting = False
 
     def health(self):
         return {"service": SERVICE_NAME, "protocol": PROTOCOL_VERSION,
@@ -207,13 +236,7 @@ class LocalModelService:
                 request = json.loads(body)
                 if path == "/generate":
                     request = self._validate_request(request)
-                    for old in list(self.runs.values()):
-                        if old.owner == request["owner"]:
-                            await self._cancel_run(old)
-                    if len(self.runs) >= 8:
-                        raise RuntimeError("Too many active model requests")
-                    run = ModelRun(self, request)
-                    self.runs[run.id] = run
+                    run = await self._new_run(request)
                 else:
                     run = self._resume(request)
                 writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson; charset=utf-8\r\n"
@@ -225,6 +248,8 @@ class LocalModelService:
                 await self._json_response(writer, "404 Not Found", {"error": "Unknown endpoint"})
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
+        except ModelBusyError as error:
+            await self._json_response(writer, "409 Conflict", {"error": str(error)})
         except Exception as error:
             if not streaming:
                 with contextlib.suppress(ConnectionError):
@@ -276,8 +301,8 @@ class LocalModelService:
     def _resume(self, request):
         if not isinstance(request, dict):
             raise ValueError("Invalid tool result request")
-        run = self.runs.get(request.get("run_id"))
-        if run is None or run.closed or run.owner != request.get("owner"):
+        run = self.run
+        if run is None or run.id != request.get("run_id") or run.closed or run.owner != request.get("owner"):
             raise ValueError("The model request has expired; send a new message to continue")
         if run.attached:
             raise ValueError("The model request already has an active connection")

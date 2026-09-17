@@ -24,7 +24,7 @@ def mlx_model_status():
 
 
 def mlx_inference_lock():
-    # All embedded backend copies share only a lock, never cached model weights.
+    # A cached model keeps this lease until it is released, including across service restarts.
     state = types.ModuleType("_pythona_ai_setup_mlx")
     state.lock = threading.Lock()
     return sys.modules.setdefault(state.__name__, state).lock
@@ -130,20 +130,14 @@ def mlx_messages(request):
     return messages
 
 
-def run_mlx(request, invoke, emit, cancelled):
-    """Own all model objects on this worker and release them before returning."""
-    if importlib.util.find_spec("mlx_lm") is None:
-        from pythona import packages
-        packages.install("mlx-lm", version=MLX_LM_VERSION)
-    if cancelled.is_set():
-        raise MLXCancelled
-    from mlx_lm import load, stream_generate
+def run_mlx(request, invoke, emit, cancelled, worker):
+    """Reuse the worker’s weights while keeping prompts and KV caches local to this request."""
+    model, tokenizer = worker.load(request["model_id"])
+    from mlx_lm import stream_generate
     from mlx_lm.sample_utils import make_sampler
 
-    model = tokenizer = stream = response = None
+    stream = response = None
     try:
-        # Loading by repository ID uses Hugging Face's download cache.
-        model, tokenizer = load(request["model_id"], tokenizer_config={"trust_remote_code": False})
         if cancelled.is_set():
             raise MLXCancelled
         if not tokenizer.has_chat_template:
@@ -201,85 +195,187 @@ def run_mlx(request, invoke, emit, cancelled):
         stream = response = model = tokenizer = None
 
 
-async def mlx_model_events(request, invoke):
-    # A synchronous MLX kernel or download must never occupy the HTTP event loop.
-    loop = asyncio.get_running_loop()
-    cancelled = threading.Event()
-    events = queue.Queue(maxsize=16)
+class MLXJob:
+    def __init__(self, request, invoke):
+        self.request = request
+        self.invoke = invoke
+        self.loop = asyncio.get_running_loop()
+        self.events = queue.Queue(maxsize=16)
+        self.cancelled = threading.Event()
+        self.done = threading.Event()
 
-    def emit(event):
-        while not cancelled.is_set():
+    def emit(self, event):
+        while not self.cancelled.is_set():
             try:
-                events.put(event, timeout=0.05)
+                self.events.put(event, timeout=0.05)
                 return
             except queue.Full:
                 pass
         raise MLXCancelled
 
-    def call(name, arguments):
-        future = asyncio.run_coroutine_threadsafe(invoke(name, arguments), loop)
+    def call(self, name, arguments):
+        future = asyncio.run_coroutine_threadsafe(self.invoke(name, arguments), self.loop)
         try:
-            while not cancelled.is_set():
+            while not self.cancelled.is_set():
                 try:
                     return future.result(timeout=0.05)
                 except concurrent.futures.TimeoutError:
-                    pass
+                    if future.done():
+                        raise
             raise MLXCancelled
         finally:
             future.cancel()
 
-    def worker():
-        lock = mlx_inference_lock()
-        acquired = False
+
+class MLXWorker:
+    """One persistent worker and one loaded model; overlapping requests are rejected."""
+
+    def __init__(self):
+        self.control = threading.Lock()
+        self.commands = queue.SimpleQueue()
+        self.closed = threading.Event()
+        self.closing = False
+        self.thread = None
+        self.job = None
+        self.model = self.tokenizer = self.model_id = None
+        self.lease = mlx_inference_lock()
+        self.leased = False
+
+    @property
+    def busy(self):
+        with self.control:
+            return self.job is not None
+
+    def load(self, model_id):
+        if not self.leased:
+            if not self.lease.acquire(blocking=False):
+                raise RuntimeError("The previous MLX service is still releasing its model. Try again shortly.")
+            self.leased = True
+        if self.model_id == model_id:
+            return self.model, self.tokenizer
+        if self.model is not None:
+            self._drop_model(release_lease=False)
+        if importlib.util.find_spec("mlx_lm") is None:
+            from pythona import packages
+            packages.install("mlx-lm", version=MLX_LM_VERSION)
+        from mlx_lm import load
+        self.model, self.tokenizer = load(model_id, tokenizer_config={"trust_remote_code": False})
+        self.model_id = model_id
+        return self.model, self.tokenizer
+
+    def _clear_unused(self):
+        mx = sys.modules.get("mlx.core")
+        if self.leased and mx is not None:
+            gc.collect()
+            mx.synchronize()
+            mx.clear_cache()
+
+    def _drop_model(self, release_lease=True):
+        self.model = self.tokenizer = self.model_id = None
+        try:
+            self._clear_unused()
+        finally:
+            if release_lease and self.leased:
+                self.leased = False
+                self.lease.release()
+
+    def _execute(self, job):
         terminal = None
         try:
-            while not cancelled.is_set():
-                if lock.acquire(timeout=0.05):
-                    acquired = True
-                    break
-            if not acquired or cancelled.is_set():
+            if job.cancelled.is_set():
                 raise MLXCancelled
-            reason = run_mlx(request, call, emit, cancelled)
+            if job.request is None:
+                self._drop_model()
+                reason = "stop"
+            else:
+                reason = run_mlx(job.request, job.call, job.emit, job.cancelled, self)
             terminal = {"type": "finish", "reason": reason}
         except MLXCancelled:
             pass
         except Exception as error:
             terminal = {"type": "error", "message": f"{type(error).__name__}: {error}"}
         finally:
-            if acquired:
-                try:
-                    # Clean up after exception tracebacks have released model references too.
-                    mx = sys.modules.get("mlx.core")
-                    if mx is not None:
-                        gc.collect()
-                        mx.synchronize()
-                        mx.clear_cache()
-                        if terminal is not None and terminal["type"] == "finish":
-                            # Peak is process-wide, not a per-request allocation.
-                            terminal["memory"] = {"peak": mx.get_peak_memory(), "active": mx.get_active_memory(),
-                                                  "cache": mx.get_cache_memory()}
-                except Exception as error:
-                    terminal = {"type": "error", "message": f"MLX cleanup failed: {error}"}
-                finally:
-                    lock.release()
-        if terminal is not None and not cancelled.is_set():
             try:
-                emit(terminal)
-            except MLXCancelled:
+                # Unwind generation frames before clearing KV caches or failed model loads.
+                if job.cancelled.is_set() or terminal is None or terminal["type"] == "error":
+                    self._drop_model()
+                elif job.request is not None:
+                    self._clear_unused()
+                    mx = sys.modules["mlx.core"]
+                    terminal["memory"] = {"peak": mx.get_peak_memory(), "active": mx.get_active_memory(),
+                                          "cache": mx.get_cache_memory()}
+            except Exception as error:
+                terminal = {"type": "error", "message": f"MLX cleanup failed: {error}"}
+                self._drop_model()
+            finally:
+                try:
+                    if terminal is not None and not job.cancelled.is_set():
+                        job.emit(terminal)
+                except MLXCancelled:
+                    pass
+                finally:
+                    with self.control:
+                        self.job = None
+                    job.done.set()
+
+    def _main(self):
+        try:
+            while (job := self.commands.get()) is not None:
+                self._execute(job)
+                job = None
+        finally:
+            try:
+                self._drop_model()
+            finally:
+                self.closed.set()
+
+    async def events(self, request, invoke):
+        job = MLXJob(request, invoke)
+        with self.control:
+            if self.closing or self.closed.is_set():
+                raise RuntimeError("The MLX service has closed")
+            if self.job is not None:
+                raise RuntimeError("The local model is busy. Wait for the current request to finish and try again.")
+            self.job = job
+            if self.thread is None:
+                self.thread = threading.Thread(target=self._main, name="MLX model", daemon=True)
+                try:
+                    self.thread.start()
+                except Exception:
+                    self.thread = None
+                    self.job = None
+                    raise
+            self.commands.put(job)
+        try:
+            while not job.done.is_set() or not job.events.empty():
+                try:
+                    event = job.events.get_nowait()
+                except queue.Empty:
+                    await asyncio.sleep(0.02)
+                    continue
+                if event["type"] == "error":
+                    raise RuntimeError(event["message"])
+                yield event
+        finally:
+            job.cancelled.set()
+
+    async def release(self):
+        if self.thread is not None:
+            async for _ in self.events(None, None):
                 pass
 
-    thread = threading.Thread(target=worker, name="MLX inference", daemon=True)
-    thread.start()
-    try:
-        while thread.is_alive() or not events.empty():
-            try:
-                event = events.get_nowait()
-            except queue.Empty:
-                await asyncio.sleep(0.02)
-                continue
-            if event["type"] == "error":
-                raise RuntimeError(event["message"])
-            yield event
-    finally:
-        # The worker keeps its lock until an in-flight native call returns and cleanup finishes.
-        cancelled.set()
+    def close(self):
+        with self.control:
+            if self.closing:
+                return
+            self.closing = True
+            if self.job is not None:
+                self.job.cancelled.set()
+            if self.thread is None:
+                self.closed.set()
+            else:
+                self.commands.put(None)
+
+    async def wait_closed(self):
+        while not self.closed.is_set():
+            await asyncio.sleep(0.02)

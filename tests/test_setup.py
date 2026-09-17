@@ -161,6 +161,8 @@ class BackendTests(unittest.TestCase):
         status, body = self.request(service, "/health")
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["service"], "pythona-local-llm")
+        other = {**self.payload(), "owner": "another-conversation"}
+        self.assertEqual(self.request(service, "/generate", other)[0], 409)
         response.close()
         conn.close()
         self.assertTrue(cancelled.wait(2), "断开连接没有取消推理")
@@ -273,6 +275,63 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(second["type"], "tool_request")
         _, body = self.request(service, "/resume", self.resume_payload(second))
         self.assertEqual(json.loads(body.splitlines()[0])["delta"], "2")
+
+    def test_another_conversation_is_rejected_during_a_tool_wait(self):
+        owners = []
+
+        async def backend(request, invoke):
+            owners.append(request["owner"])
+            if request["tools"]:
+                await invoke("read_file", {})
+            yield {"type": "finish", "reason": "stop"}
+
+        service = self.start(backend)
+        _, body = self.request(service, "/generate", self.tool_payload())
+        call = json.loads(body)
+        other = {**self.payload(), "owner": "another-conversation"}
+        status, error = self.request(service, "/generate", other)
+        self.assertEqual(status, 409)
+        self.assertIn("busy", json.loads(error)["error"])
+        self.assertEqual(owners, ["test-conversation"])
+        self.assertEqual(self.request(service, "/health")[0], 200)
+        self.assertEqual(self.request(service, "/resume", self.resume_payload(call))[0], 200)
+        self.assertEqual(self.request(service, "/generate", other)[0], 200)
+        self.assertEqual(owners, ["test-conversation", "another-conversation"])
+
+    def test_admission_stays_reserved_while_a_superseded_run_is_cancelling(self):
+        from concurrent.futures import ThreadPoolExecutor
+        cancelling, release = threading.Event(), threading.Event()
+        runs = []
+
+        async def backend(request, invoke):
+            runs.append(request)
+            if len(runs) == 1:
+                try:
+                    await asyncio.sleep(30)
+                finally:
+                    cancelling.set()
+                    while not release.is_set():
+                        await asyncio.sleep(0.01)
+            yield {"type": "finish", "reason": "stop"}
+
+        service = self.start(backend)
+        connection = http.client.HTTPConnection("127.0.0.1", service.port, timeout=3)
+        connection.request("POST", "/generate", body=json.dumps(self.payload()),
+                           headers={"Authorization": "Bearer " + self.settings["service_token"]})
+        response = connection.getresponse()
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            replacement = pool.submit(self.request, service, "/generate", self.payload())
+            try:
+                self.assertTrue(cancelling.wait(1))
+                for owner in ("another-conversation", "test-conversation"):
+                    self.assertEqual(self.request(service, "/generate", {**self.payload(), "owner": owner})[0], 409)
+                self.assertEqual(len(runs), 1)
+            finally:
+                release.set()
+                response.close()
+                connection.close()
+            self.assertEqual(replacement.result(timeout=2)[0], 200)
+        self.assertEqual(len(runs), 2)
 
     def test_waiting_tool_expires_and_new_message_cancels_superseded_run(self):
         cancelled = threading.Event()

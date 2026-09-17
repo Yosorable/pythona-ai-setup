@@ -151,11 +151,22 @@ def model_status(settings):
     return mlx_model_status() if settings["backend"] == "mlx_lm" else apple_model_status()
 
 
-async def model_events(request, invoke):
-    backend = mlx_model_events if request["backend"] == "mlx_lm" else apple_model_events
-    events = backend(request, invoke)
+async def model_events(request, invoke, mlx):
+    apple_lease = False
+    if request["backend"] == "mlx_lm":
+        events = mlx.events(request, invoke)
+    else:
+        await mlx.release()
+        if not mlx.lease.acquire(blocking=False):
+            raise RuntimeError("The previous model service is still stopping. Try again shortly.")
+        apple_lease = True
+        events = apple_model_events(request, invoke)
     try:
         async for event in events:
             yield event
     finally:
-        await events.aclose()
+        try:
+            await events.aclose()
+        finally:
+            if apple_lease:
+                mlx.lease.release()

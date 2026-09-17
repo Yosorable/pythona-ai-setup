@@ -91,14 +91,28 @@ to start a daemon thread with an asyncio loop. Startup returns promptly and
 subsequent `run_python` calls remain available. MLX downloads and inference run on
 a separate worker, keeping the HTTP loop responsive.
 
-MLX requests are serialized across embedded backend copies. A request owns its
-model through any tool exchanges, then releases model objects and clears unused
-MLX allocations. Models are not cached in memory between requests. Weights stay
-in the disk cache, so subsequent requests reload them without downloading them again.
-Apple and MLX configurations can coexist without preloading multiple MLX models.
+Only one conversation can generate or wait for tools at a time, across both
+backends. Another conversation receives HTTP 409 with a busy message, without
+interrupting the current one or joining a queue. After the current turn finishes,
+any conversation can use the service. A new turn in the same conversation can
+cancel its previous unfinished request; native work still stopping must finish
+before another request is accepted.
 
-MLX test results show the MLX process memory peak, active allocations after cleanup,
-and remaining cache. These are MLX allocator measurements, not total App memory;
+MLX uses one persistent background worker. It retains only the most recently used
+model and tokenizer, reusing them across turns and configurations with the same
+model ID. Switching models releases the previous weights before loading the next;
+switching to Apple Foundation Models also releases the MLX model. Service shutdown
+and idle timeout release the retained model. A lease shared by embedded backend
+copies prevents a replacement service from loading another model before the old
+one finishes cleanup.
+
+Prompts, conversation history, and KV caches are rebuilt for each generation and
+are not retained with the weights. Unused MLX allocations are cleared after each
+request. Keeping the model loaded reduces repeated loading work but continues to
+use memory while waiting for the next message.
+
+MLX test results show the MLX process memory peak, active allocations including the
+retained model, and remaining cache. These are MLX allocator measurements, not total App memory;
 the peak includes earlier MLX use in the same App process. Actual memory use and
 model quality still need testing on a supported device.
 The MLX configuration page also explains that older devices may report MLX
@@ -112,8 +126,8 @@ request continues without replaying the tool.
 
 A streaming HTTP disconnect requests cancellation. MLX cancellation is cooperative:
 a native kernel, package installation, or download already in progress must return
-before the worker can release its resources. The worker retains the inference lock
-until cleanup finishes, so a replacement request cannot load another model early.
+before the worker can release its resources. Requests arriving during that cleanup
+receive a busy response. Cancelled or failed generations discard the retained model.
 During native tool execution there is no active provider HTTP connection, so Stop
 cannot immediately notify the service in that gap. Abandoned tool waits and normal
 HTTP rounds expire after `request_seconds` (default 120 seconds). An initial MLX
@@ -167,8 +181,8 @@ npm test
 ```
 
 With MLX and MLX-LM installed on a Mac, the optional smoke check runs the actual
-adapter twice with temporary tiny Qwen3 weights. It does not download model weights
-or measure the full default model:
+adapter twice with temporary tiny Qwen3 weights, checking model reuse and memory
+release on shutdown. It does not download model weights or measure the full default model:
 
 ```sh
 python3 scripts/test_mlx.py
