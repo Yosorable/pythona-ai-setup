@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_setup.bundle import backend_bundle, bootstrap_source, build_provider, load_backend
-from ai_setup.settings import SettingsStore, defaults, install, provider_settings, STORAGE_KEY, STATE_PATH
+from ai_setup.settings import SettingsStore, defaults, service_defaults, install, provider_settings, STORAGE_KEY, STATE_PATH
 
 
 class FakeAI:
@@ -106,7 +106,7 @@ class InstallTests(unittest.TestCase):
 class BackendTests(unittest.TestCase):
     def setUp(self):
         self.namespace = load_backend()
-        self.settings = provider_settings(defaults())
+        self.settings = provider_settings(defaults(), service_defaults())
         self.settings["port"] = 0
         self.settings["idle_seconds"] = 30
         self.services = []
@@ -136,7 +136,7 @@ class BackendTests(unittest.TestCase):
         return response.status, body
 
     def payload(self):
-        return {"owner": "test-conversation", "instructions": "照原样保留", "tools": [],
+        return {"backend": "apple_fm", "model_id": "", "owner": "test-conversation", "instructions": "照原样保留", "tools": [],
                 "messages": [{"role": "user", "content": "你好"}]}
 
     def test_health_works_during_generation_and_disconnect_cancels(self):
@@ -211,7 +211,7 @@ class BackendTests(unittest.TestCase):
                 second = self.namespace["start_service"](config, build_id)
                 self.assertEqual(first, second)
                 result = self.namespace["service_json"](config, "/status")
-                self.assertFalse(result["available"])
+                self.assertFalse(result["apple_fm"]["available"])
             finally:
                 self.namespace["service_json"](config, "/shutdown", method="POST")
 
@@ -221,7 +221,7 @@ class BackendTests(unittest.TestCase):
         return payload
 
     def resume_payload(self, call, **result):
-        return {"owner": "test-conversation", "run_id": call["run_id"],
+        return {"backend": "apple_fm", "model_id": "", "owner": "test-conversation", "run_id": call["run_id"],
                 "result": {"id": call["id"], "name": call["name"], "content": "print(1)", "failed": False, **result}}
 
     def test_tool_result_resumes_same_generation_and_preserves_failure(self):

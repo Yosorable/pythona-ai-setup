@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from ai_setup.model import model_events, native_tools, tool_arguments, tool_schema
+from ai_setup.model import apple_model_events as model_events, native_tools, tool_arguments, tool_schema
 
 
 DEFINITIONS = [

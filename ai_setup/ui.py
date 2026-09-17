@@ -129,10 +129,11 @@ def main():
     host = WebSettings(app)
     try:
         run_on_ui(host.open).wait()
+        app.refresh_installations()
         app.check_availability()
         while not app.closed.is_set():
             host.process_next()
     finally:
         run_on_ui(host.close).wait()
-        if app.worker is not None:
-            app.worker.join(timeout=1)
+        for job in app.jobs.values():
+            job["worker"].join(timeout=0.1)

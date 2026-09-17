@@ -9,17 +9,18 @@ const { webcrypto } = require("node:crypto");
 
 const project = path.resolve(__dirname, "..");
 const python = process.env.TEST_PYTHON || "python3";
-const script = execFileSync(python, ["-c", "from ai_setup.bundle import build_provider; from ai_setup.settings import defaults, provider_settings; print(build_provider(provider_settings(defaults())))"],
+const script = execFileSync(python, ["-c", "from ai_setup.bundle import build_provider; from ai_setup.settings import defaults, service_defaults, provider_settings; print(build_provider(provider_settings(defaults(), service_defaults())))"],
                             { cwd: project, encoding: "utf8" });
 const schema = name => ({ name, description: name, inputSchema: { type: "object", properties: {} } });
 const tools = ["run_python", "read_file", "write_file", "browser_open", "browser_read_text"].map(schema);
 
-function runtime(fetch, groups = { files: false, python: false, browser: false }) {
+function runtime(fetch, groups = { files: false, python: false, browser: false }, overrides = {}) {
   const sandbox = { fetch, AbortController, TextDecoder, TextEncoder, setTimeout, clearTimeout, crypto: webcrypto };
   vm.createContext(sandbox);
   vm.runInContext(script, sandbox);
   const settings = JSON.parse(vm.runInContext("JSON.stringify(DEFAULT_SETTINGS)", sandbox));
   settings.groups = groups;
+  Object.assign(settings, overrides);
   sandbox.localStorage = { getItem: () => JSON.stringify(settings) };
   sandbox.build = vm.runInContext("BACKEND_BUILD", sandbox);
   return sandbox;
@@ -32,7 +33,7 @@ function context(records = [{ index: 0, type: "message", message: { role: "user"
 }
 
 function health(sandbox) {
-  return Response.json({ service: "pythona-local-llm", protocol: 2, build: sandbox.build });
+  return Response.json({ service: "pythona-local-llm", protocol: 3, build: sandbox.build });
 }
 
 function streamResponse(events, bytesPerChunk = 1) {
@@ -49,7 +50,7 @@ test("startup works with the Python group disabled and embeds standalone Python"
   await sandbox.stream(context(), event => events.push(event));
   assert.equal(events.length, 1);
   assert.equal(events[0].name, "run_python");
-  assert.equal(events[0].metadata.apple_fm_service_start, true);
+  assert.equal(events[0].metadata.local_model_service_start, true);
   execFileSync(python, ["-c", "import sys; compile(sys.stdin.read(), '<bootstrap>', 'exec')"], { input: events[0].input.code });
   assert.ok(!events[0].input.code.includes(project));
 });
@@ -68,6 +69,23 @@ test("selected groups preserve instructions and decode split Unicode bytes", asy
   assert.equal(events[0].delta, "你好 😀");
 });
 
+test("MLX profiles sharing one service send their own model and conversation owner", async () => {
+  const bodies = [];
+  for (const [index, modelID] of ["mlx-community/Qwen3-1.7B-4bit", "example/another-model"].entries()) {
+    const sandbox = runtime(async (url, options) => {
+      if (url.endsWith("/health")) return health(sandbox);
+      bodies.push(JSON.parse(options.body));
+      return streamResponse([{ type: "text", delta: "Hello" }, { type: "finish", reason: "stop" }]);
+    }, { files: true, browser: false, python: false }, { backend: "mlx_lm", model_id: modelID });
+    const ctx = context();
+    ctx.provider.id = "mlx-provider-" + index;
+    await sandbox.stream(ctx, () => {});
+  }
+  assert.deepEqual(bodies.map(body => body.model_id), ["mlx-community/Qwen3-1.7B-4bit", "example/another-model"]);
+  assert.ok(bodies.every(body => body.backend === "mlx_lm"));
+  assert.notEqual(bodies[0].owner, bodies[1].owner);
+});
+
 test("browser filtering uses actual tools and excludes bootstrap history", async () => {
   let body;
   const sandbox = runtime(async (url, options) => {
@@ -77,7 +95,7 @@ test("browser filtering uses actual tools and excludes bootstrap history", async
   }, { files: false, browser: true, python: false });
   const records = context().getTranscript().records;
   records.push({ index: 1, type: "message", message: { role: "assistant", parts: [], tool_calls: [
-    { id: "boot", function: { name: "run_python", arguments: "BIG EMBEDDED CODE" }, metadata: { apple_fm_service_start: true } }
+    { id: "boot", function: { name: "run_python", arguments: "BIG EMBEDDED CODE" }, metadata: { local_model_service_start: true } }
   ] } });
   records.push({ index: 2, type: "message", message: { role: "tool", tool_call_id: "boot", content: "started" } });
   records.push({ index: 3, type: "message", message: { role: "assistant", parts: [{ type: "text", text: "上一轮" }], tool_calls: [
@@ -98,7 +116,7 @@ test("failed startup does not loop and disabled tools are rejected", async () =>
   const sandbox = runtime(async () => { throw new Error("Unexpected network request"); });
   const records = context().getTranscript().records;
   records.push({ type: "message", message: { role: "assistant", tool_calls: [
-    { id: "boot", metadata: { apple_fm_service_start: true } }
+    { id: "boot", metadata: { local_model_service_start: true } }
   ] } });
   records.push({ type: "message", message: { role: "tool", tool_call_id: "boot", tool_failed: true, content: "port busy" } });
   await assert.rejects(sandbox.stream(context(records), () => assert.fail()), /port busy/);
@@ -166,7 +184,7 @@ test("new user turns start fresh; lost SDK runs never replay tools or bootstrap"
   records.push({ index: 4, type: "message", message: { role: "user", content: "Try another request" } });
   const output = [];
   await offline.stream(context(records), event => output.push(event));
-  assert.equal(output[0].metadata.apple_fm_service_start, true);
+  assert.equal(output[0].metadata.local_model_service_start, true);
 });
 
 test("incomplete or malformed handoffs never execute native tools", async () => {

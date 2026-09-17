@@ -6,7 +6,7 @@ import math
 from typing import Optional
 
 
-def model_status():
+def apple_model_status():
     try:
         import apple_fm_sdk as fm
         model = fm.SystemLanguageModel()
@@ -117,7 +117,7 @@ def native_tools(fm, definitions, invoke):
     return [NativeTool(definition) for definition in definitions]
 
 
-async def model_events(request, invoke):
+async def apple_model_events(request, invoke):
     # Lazy loading keeps installation usable without a working SDK or model.
     import apple_fm_sdk as fm
 
@@ -145,3 +145,17 @@ async def model_events(request, invoke):
     if not previous.strip():
         raise RuntimeError("The model returned no response text")
     yield {"type": "finish", "reason": "stop"}
+
+
+def model_status(settings):
+    return mlx_model_status() if settings["backend"] == "mlx_lm" else apple_model_status()
+
+
+async def model_events(request, invoke):
+    backend = mlx_model_events if request["backend"] == "mlx_lm" else apple_model_events
+    events = backend(request, invoke)
+    try:
+        async for event in events:
+            yield event
+    finally:
+        await events.aclose()

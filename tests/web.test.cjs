@@ -25,7 +25,7 @@ test('browser page installs and updates with an unavailable model, preserves edi
     await page.waitForTimeout(650);
     assert.equal(await page.locator('#name').inputValue(), 'Edited while polling');
     await page.locator('#install').click();
-    assert.match(await page.locator('#installation').innerText(), /preview-provider/);
+    assert.match(await page.locator('#installation').innerText(), /preview-/);
     await page.locator('#prompt').fill('<script>window.injected = true</script>');
     await page.locator('#test').click();
     await page.waitForFunction(() => document.getElementById('reply').textContent.includes('<script>'));
@@ -69,5 +69,54 @@ test('all app languages and the desktop dark layout render without horizontal ov
     assert.equal(settings.y, probe.y);
     assert.ok(probe.x > settings.x + settings.width);
     await page.screenshot({ path: '/tmp/pythona-ai-setup-web-desktop.png', fullPage: true });
+  } finally { await browser.close(); }
+});
+
+test('multiple profiles keep their model IDs, tool choices, installations, and test replies separate', async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setContent(render('en'));
+    await page.waitForFunction(() => document.documentElement.dataset.ready === 'true');
+    await page.locator('#install').click();
+    const appleID = await page.locator('#installation').innerText();
+    await page.locator('#new-backend').selectOption('mlx_lm');
+    await page.locator('#new').click();
+    await page.waitForFunction(() => !document.getElementById('mlx-settings').hidden);
+    assert.equal(await page.locator('#model-id').inputValue(), 'mlx-community/Qwen3-1.7B-4bit');
+    assert.match(await page.locator('.model-notice').innerText(), /older devices.*error/);
+    assert.match(await page.locator('.model-notice').innerText(), /multiple conversation turns/);
+    assert.equal(await page.locator('#files').isChecked(), true);
+    await page.locator('#model-id').fill('example/Another-Qwen');
+    await page.locator('#name').fill('My MLX model');
+    await page.locator('#browser').check();
+    await page.locator('#install').click();
+    const mlxID = await page.locator('#installation').innerText();
+    assert.notEqual(mlxID, appleID);
+    await page.locator('#prompt').fill('MLX-specific reply');
+    await page.locator('#test').click();
+    await page.locator('.profile').first().click();
+    await page.waitForFunction(() => document.getElementById('mlx-settings').hidden);
+    assert.equal(await page.locator('.model-notice').isVisible(), false);
+    assert.equal(await page.locator('#browser').isChecked(), false);
+    assert.equal(await page.locator('#installation').innerText(), appleID);
+    await page.waitForTimeout(700);
+    assert.equal(await page.locator('#reply').innerText(), '');
+    await page.locator('.profile').nth(1).click();
+    await page.waitForFunction(() => document.getElementById('reply').textContent.includes('MLX-specific reply'));
+    assert.equal(await page.locator('#model-id').inputValue(), 'example/Another-Qwen');
+    assert.equal(await page.locator('#browser').isChecked(), true);
+    await page.locator('#install').click();
+    assert.equal(await page.locator('#installation').innerText(), mlxID);
+    await page.locator('#new').click();
+    await page.waitForFunction(() => document.querySelectorAll('.profile').length === 3);
+    await page.locator('#remove').click();
+    await page.waitForFunction(() => document.querySelectorAll('.profile').length === 2);
+    await page.locator('.profile').nth(1).click();
+    await page.waitForFunction(() => !document.getElementById('mlx-settings').hidden);
+    await page.screenshot({ path: '/tmp/pythona-ai-setup-mlx-profiles.png', fullPage: true });
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });

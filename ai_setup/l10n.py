@@ -45,6 +45,10 @@ class Localizer:
         text = str(error)
         if text == "Connection name must not be empty":
             return self("empty_name")
+        if text == "Enter a Hugging Face model ID":
+            return self("invalid_model_id")
+        if text == "Remove this provider in Pythona's AI Assistant settings first":
+            return self("remove_help")
         for reason in ("APPLE_INTELLIGENCE_NOT_ENABLED", "DEVICE_NOT_ELIGIBLE", "MODEL_NOT_READY", "UNKNOWN"):
             if text.endswith("Apple on-device model unavailable: " + reason):
                 return self("unavailable", reason=self.reason(reason))

@@ -17,12 +17,25 @@
       <h1 data-i18n="title"></h1>
       <p data-i18n="intro"></p>
     </div>
-    <div class="panels">
+    <section class="panel profiles-panel">
+      <div class="profiles-heading"><h2 data-i18n="profiles"></h2><button id="refresh" class="compact" data-i18n="refresh" disabled></button></div>
+      <div id="profiles" class="profiles"></div>
+      <p id="empty-profiles" class="hint" data-i18n="empty_profiles" hidden></p>
+      <div class="new-profile"><label for="new-backend" data-i18n="backend"></label><select id="new-backend"><option value="apple_fm" data-i18n="apple_backend"></option><option value="mlx_lm">MLX-LM</option></select><button id="new" class="compact" data-i18n="new_profile" disabled></button></div>
+      <p id="error" class="error" hidden></p>
+    </section>
+    <div id="editor" class="panels">
       <section class="panel settings-panel">
         <div class="section-heading"><span class="section-number">01</span><h2 data-i18n="settings"></h2></div>
         <div id="availability" class="availability" data-kind="checking"><span class="status-dot"></span><span id="availability-text" data-i18n="checking"></span></div>
         <label class="field-label" for="name" data-i18n="connection_name"></label>
         <input id="name" type="text" autocomplete="off" spellcheck="false" disabled>
+        <div id="mlx-settings" class="model-field" hidden>
+          <label class="field-label" for="model-id" data-i18n="model_id"></label>
+          <input id="model-id" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" disabled>
+          <p class="hint" data-i18n="model_help"></p>
+          <p class="model-notice" data-i18n="mlx_device_warning"></p>
+        </div>
         <fieldset id="tools" disabled>
           <legend data-i18n="tools"></legend>
           <label class="tool-row">
@@ -44,7 +57,7 @@
         <p class="hint" data-i18n="tools_help"></p>
         <button id="install" class="primary" disabled><span data-i18n="install"></span><span>→</span></button>
         <p id="installation" class="installation" data-i18n="not_installed"></p>
-        <p id="error" class="error" hidden></p>
+        <div class="remove-profile"><button id="remove" class="compact danger" data-i18n="remove_profile" disabled></button><p id="remove-help" class="hint" data-i18n="remove_help" hidden></p></div>
       </section>
       <section class="panel test-panel">
         <div class="section-heading"><span class="section-number">02</span><h2 data-i18n="test_section"></h2></div>
@@ -56,6 +69,7 @@
           <div class="reply-heading"><span class="reply-dot"></span><span data-i18n="model_reply"></span></div>
           <p id="test-status" class="test-status"></p>
           <div id="reply" class="reply"></div>
+          <p id="test-memory" class="test-status" hidden></p>
         </div>
       </section>
     </div>

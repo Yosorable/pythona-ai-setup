@@ -13,6 +13,7 @@ async def generate_probe(settings, prompt):
     reader, writer = await asyncio.open_connection("127.0.0.1", settings["port"])
     try:
         body = json.dumps({"owner": "probe_" + uuid.uuid4().hex,
+                           "backend": settings["backend"], "model_id": settings["model_id"],
                            "instructions": "Answer briefly in the user's language.",
                            "messages": [{"role": "user", "content": prompt}], "tools": [],
                            "maximum_response_tokens": 256}, ensure_ascii=False).encode("utf-8")
@@ -27,6 +28,7 @@ async def generate_probe(settings, prompt):
             raise RuntimeError((await reader.read()).decode("utf-8", "replace"))
         text = ""
         finished = False
+        memory = None
         while line := await reader.readline():
             event = json.loads(line)
             if event["type"] == "error":
@@ -35,9 +37,10 @@ async def generate_probe(settings, prompt):
                 text += event["delta"]
             if event["type"] == "finish":
                 finished = True
+                memory = event.get("memory")
         if not finished or not text.strip():
             raise RuntimeError("No complete model response was received")
-        return text
+        return {"text": text, "memory": memory}
     finally:
         writer.close()
         with contextlib.suppress(Exception):
@@ -51,7 +54,8 @@ def test_model(settings, prompt, cancelled):
 
     async def run():
         task = asyncio.create_task(generate_probe(settings, prompt))
-        deadline = asyncio.get_running_loop().time() + settings["request_seconds"] + 5
+        limit = settings["load_seconds"] if settings["backend"] == "mlx_lm" else settings["request_seconds"]
+        deadline = asyncio.get_running_loop().time() + limit + 5
         try:
             while not task.done():
                 if cancelled.is_set():
@@ -66,4 +70,4 @@ def test_model(settings, prompt, cancelled):
 
     started = time.monotonic()
     answer = asyncio.run(run())
-    return {"text": answer, "seconds": time.monotonic() - started}
+    return {**answer, "seconds": time.monotonic() - started}

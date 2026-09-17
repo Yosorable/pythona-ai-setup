@@ -42,8 +42,9 @@ final class LocalLLMIntegrationTests: XCTestCase {
             state.store.value['name'] = 'Local LLM Test'
             with socket.socket() as sock:
                 sock.bind(('127.0.0.1', 0))
-                state.store.value['port'] = sock.getsockname()[1]
-            state.app = SetupApp(state.store, 'en', status=lambda: {'available': False, 'reason': 'DEVICE_NOT_ELIGIBLE'})
+                state.store.service['port'] = sock.getsockname()[1]
+            state.app = SetupApp(state.store, 'en', status=lambda settings: {'available': False,
+                'reason': 'DEVICE_NOT_ELIGIBLE' if settings['backend'] == 'apple_fm' else 'MLX_UNAVAILABLE'})
             state.host = WebSettings(state.app)
             run_on_ui(state.host.open).wait()
             def pump():
@@ -122,7 +123,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             from ai_setup.settings import provider_settings
             state = sys.modules['_local_llm_integration']
             runtime = load_backend()
-            runtime['service_json'](provider_settings(state.store.value), '/shutdown', method='POST')
+            runtime['service_json'](provider_settings(state.store.value, state.store.service), '/shutdown', method='POST')
             async def schemas():
                 async def unused(name, arguments):
                     raise AssertionError('Unexpected tool execution')
@@ -141,12 +142,12 @@ final class LocalLLMIntegrationTests: XCTestCase {
                     assert json.loads(result) == {'content': 'print(1)', 'failed': False}
                     yield {'type': 'text', 'delta': 'File read 😀'}
                 yield {'type': 'finish', 'reason': 'stop'}
-            settings = provider_settings(state.store.value)
+            settings = provider_settings(state.store.value, state.store.service)
             settings['port'] = 0
             state.service = runtime['LocalModelService'](settings, backend_bundle()[1], backend=backend,
                 status=lambda: {'available': False, 'reason': 'DEVICE_NOT_ELIGIBLE'}).start()
             with state.app.lock:
-                state.store.value['port'] = state.service.port
+                state.store.service['port'] = state.service.port
             """)
             XCTAssertTrue(mocked.succeeded, mocked.output)
             _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test Updated'; document.getElementById('install').click()")
@@ -178,6 +179,34 @@ final class LocalLLMIntegrationTests: XCTestCase {
             try await wait(web, "window.scrollY > 0 && document.getElementById('reply').getBoundingClientRect().bottom <= window.visualViewport.height + window.visualViewport.offsetTop")
             try await Task.sleep(for: .milliseconds(150))
             capture("Web settings · Test conversation")
+            // Multiple installed profiles must remain independent, including deletion in the App.
+            _ = try await web.evaluateJavaScript("document.getElementById('new-backend').value = 'mlx_lm'; document.getElementById('new').click()")
+            try await wait(web, "!document.getElementById('mlx-settings').hidden && !document.getElementById('new').disabled")
+            let modelID = try await web.evaluateJavaScript("document.getElementById('model-id').value")
+            XCTAssertEqual(modelID as? String, "mlx-community/Qwen3-1.7B-4bit")
+            _ = try await web.evaluateJavaScript("document.getElementById('name').value = 'Local LLM Test MLX'; document.getElementById('install').click()")
+            try await wait(web, "!document.getElementById('install').disabled && document.getElementById('install').textContent.includes('Update')")
+            let mlx = try XCTUnwrap(AIConfigStore.all().first(where: { $0.name == "Local LLM Test MLX" }))
+            XCTAssertNotEqual(mlx.id, id)
+            let mlxSettings = try XCTUnwrap(JSFileLocalStorage.snapshot(namespace: mlx.id)["local_model_settings"])
+            XCTAssertTrue(mlxSettings.contains("mlx-community/Qwen3-1.7B-4bit"))
+            _ = try await web.evaluateJavaScript("document.getElementById('model-id').value = 'example/another-model'; document.getElementById('install').click()")
+            try await wait(web, "!document.getElementById('install').disabled")
+            let changedMLX = try XCTUnwrap(AIConfigStore.config(id: mlx.id))
+            XCTAssertTrue(JSFileLocalStorage.snapshot(namespace: changedMLX.id)["local_model_settings"]?.contains("example/another-model") == true)
+            XCTAssertEqual(AIConfigStore.config(id: id)?.name, "Local LLM Test Updated")
+            AIConfigStore.delete(mlx.id)
+            _ = try await web.evaluateJavaScript("document.getElementById('refresh').click()")
+            try await wait(web, "!document.getElementById('refresh').disabled && document.getElementById('install').textContent.includes('Add to')")
+            _ = try await web.evaluateJavaScript("document.getElementById('install').click()")
+            try await wait(web, "!document.getElementById('install').disabled && document.getElementById('install').textContent.includes('Update')")
+            let replacement = try XCTUnwrap(AIConfigStore.all().first(where: { $0.name == "Local LLM Test MLX" }))
+            XCTAssertNotEqual(replacement.id, mlx.id)
+            _ = try await web.evaluateJavaScript("window.scrollTo(0, 0)")
+            try await Task.sleep(for: .milliseconds(300))
+            capture("Web settings · Apple and MLX configurations")
+            _ = try await web.evaluateJavaScript("document.querySelector('.profile').click()")
+            try await wait(web, "document.getElementById('mlx-settings').hidden && !document.getElementById('install').disabled")
             // Native Done must preserve uncommitted form edits and keep invalid forms open.
             _ = try await web.evaluateJavaScript("document.getElementById('name').value = ''")
             XCTAssertTrue(UIApplication.shared.sendAction(doneAction, to: done.target, from: done, for: nil))
@@ -203,7 +232,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             saved = SettingsStore(state.store.path).value
             assert saved['name'] == 'Local LLM Test Draft'
             assert saved['provider_id'] == state.store.value['provider_id']
-            assert state.app.closed.is_set() and state.app.cancelled.is_set()
+            assert state.app.closed.is_set() and all(job['cancelled'].is_set() for job in state.app.jobs.values())
             """)
             XCTAssertTrue(closed.succeeded, closed.output)
         } catch {
@@ -245,7 +274,7 @@ final class LocalLLMIntegrationTests: XCTestCase {
             with contextlib.suppress(Exception):
                 from ai_setup.bundle import load_backend
                 from ai_setup.settings import provider_settings
-                load_backend()['service_json'](provider_settings(state.store.value), '/shutdown', method='POST')
+                load_backend()['service_json'](provider_settings(state.store.value, state.store.service), '/shutdown', method='POST')
             state.directory.cleanup()
             sys.path[:] = [path for path in sys.path if path != state.root]
         """)

@@ -1,19 +1,21 @@
 # Pythona AI Setup
 
-Configure AI providers for Pythona AI Assistant. The current backend uses Apple’s
-on-device model. Clone this repository in Pythona and run **`main.py`** from the
-project root.
+Configure local model providers for Pythona AI Assistant. Clone this repository in
+Pythona and run **`main.py`** from the project root.
 
-The local Web settings page lets you test the model, choose tool categories, and
-add or update a JavaScript provider. Installation works even when the model is
-unavailable. Apple Foundation Models is the current backend; MLX is not implemented.
+Create independent configurations for **Apple Foundation Models** and **MLX-LM**.
+Each configuration has its own name, tool choices, model selection, and installed
+provider ID. Installation works even when the model is unavailable.
 
 ## Requirements
 
 - Pythona with the `pythona.ai` Custom Provider API v2.
 - Pythona's bundled rubicon-objc for the WebKit container.
-- A supported device with Apple Intelligence and `apple-fm-sdk` for actual inference.
-  Missing model assets or SDK support do not prevent provider installation.
+- Apple Foundation Models: a supported device with Apple Intelligence and
+  `apple-fm-sdk` for inference.
+- MLX-LM: Pythona's bundled MLX. On the first test or assistant request, the backend
+  installs `mlx-lm==0.31.3` through `pythona.packages` if it is missing, and downloads
+  the selected model from Hugging Face. Choose an MLX-compatible model repository.
 
 The page follows Pythona's App language, with English as its source and fallback.
 It includes English, Simplified and Traditional Chinese, German, Spanish, French,
@@ -21,84 +23,134 @@ Japanese, Korean, and Russian. Light and dark appearances are supported.
 
 ## Use
 
-1. Run `main.py` in Pythona.
-2. Choose the connection name and tools. File tools are enabled by default;
+1. Run `main.py` in Pythona. Select an existing configuration, or choose a backend
+   and **Add Configuration**.
+2. Set the connection name and tools. File tools are enabled by default;
    browser and Python tools are initially disabled.
-3. Optionally run a test in the separate **Test Conversation** section.
-4. Choose **Add to AI Assistant**, then close the page and select the connection
-   in Pythona's AI Assistant settings.
+3. For MLX-LM, enter a Hugging Face model ID. The default is
+   `mlx-community/Qwen3-1.7B-4bit`, matching Pythona's `llm_demo.py` example.
+   Its first download is about 1 GB.
+4. Optionally run a test in the separate **Test Conversation** section.
+5. Choose **Add to AI Assistant**, then close the page and select the connection
+   in Pythona's AI Assistant settings. Use **Update Provider** to update that
+   configuration without changing its provider ID.
 
-Run the project again to update the same provider. The page saves configuration and
-the provider ID in `settings.local.json`, next to `main.py`. This file is ignored
-by Git. If the provider was deleted in Pythona, installation creates a new one.
-Updating replaces that provider's JavaScript and its runtime configuration while
-preserving unrelated localStorage keys.
+Opening the page, switching configurations, and **Refresh** check saved provider
+IDs against Pythona. A missing ID is marked as uninstalled; installing again creates
+and records a new ID. A lookup failure preserves the ID and reports the error.
+Updates also check the ID immediately before using it. Only IDs saved by this project
+are queried; Pythona's other providers are not enumerated.
 
-## How it works
+To delete an installed provider, remove it in Pythona's AI Assistant settings.
+Refresh this page to detect the deletion, then use **Remove Configuration** if you
+also want to remove its setup record. Draft configurations can be removed directly.
 
-The page is plain HTML, CSS, and JavaScript, loaded into a small WKWebView container
-with a native navigation title and localized Done button. Done saves the latest
-form values before closing; a validation error keeps the page open for correction.
-WebKit handles native keyboard scrolling; the page has one document scroll area
-and no fixed-height chat output. The page communicates with Python using JSON
-messages. Model checks and tests run in background threads, so the install action
-remains available while a test runs. Closing the page removes the message handler
-and requests cancellation of any active test.
+## Storage and privacy
 
-Each enabled native tool becomes a separate `fm.Tool`, with its own name,
-description, and typed parameter schema. The adapter supports the App's current
-strings, integers, numbers, booleans, optional fields, string enums, and numeric
-bounds. Unsupported schemas fail explicitly.
+`settings.local.json`, next to `main.py`, contains a `profiles` array, the
+`selected_id`, and shared `service` settings. Every profile has its own local `id`
+and a separate `provider_id` returned by Pythona. This file is ignored by Git.
+There is no migration from the previous single-configuration format.
+
+Each installed provider contains its runtime configuration under
+`local_model_settings` in that provider's localStorage. Updating replaces its
+JavaScript and this configuration while preserving unrelated localStorage keys.
+The setup page itself uses a nonpersistent WebKit data store.
+
+MLX dependencies and model downloads contact PyPI and Hugging Face respectively.
+Model files use Hugging Face's normal local cache. Prompts and model responses are
+processed on the device. Enabled tools can make their own network requests.
+
+## Model adapters
+
+Apple Foundation Models represents each enabled native tool as a separate `fm.Tool`,
+with its own name, description, and typed parameter schema. The adapter supports
+the App's current strings, integers, numbers, booleans, optional fields, string
+enums, and numeric bounds. Unsupported schemas fail explicitly.
+
+MLX-LM uses the selected model's chat template and built-in tool parser. It passes
+individual function schemas to the template, validates complete tool arguments,
+and supplies tool results before generating the next response. Models without
+tool support can be used with all tool categories disabled. Thinking is disabled
+through the chat template where the model supports that option.
+
+Only tools present in `ctx.nativeTools` can be selected. The provider does not
+additionally inspect `ctx.preferences.browserTools`. `ctx.instructions` is passed
+unchanged, and history is not automatically truncated. Startup calls are excluded
+from model history.
+
+## Service and memory lifecycle
 
 The generated JavaScript embeds the complete compressed Python backend. After
-installation it does not depend on this repository's files. If the authenticated
-service at `127.0.0.1:8768` is absent, JavaScript uses its embedded code through
-`run_python` to start a daemon thread with an asyncio loop. The startup call returns
-and subsequent `run_python` calls remain available.
+installation it does not depend on this repository's files. All configurations
+share one authenticated service at `127.0.0.1:8768`. Each request identifies its
+backend and model, so changing an MLX profile does not change another profile.
 
-During a user turn, a model tool callback waits while HTTP hands the complete call
-to JavaScript. The provider records the run and call IDs, and Pythona executes the
-native tool. The next provider invocation returns the result and failure flag to
-`/resume`; the same SDK response continues. Text is streamed before and after calls.
+If the service is absent, JavaScript uses its embedded code through `run_python`
+to start a daemon thread with an asyncio loop. Startup returns promptly and
+subsequent `run_python` calls remain available. MLX downloads and inference run on
+a separate worker, keeping the HTTP loop responsive.
 
-Only tools actually present in `ctx.nativeTools` can be selected. The provider does
-not additionally inspect `ctx.preferences.browserTools`; execution still depends
-on what the App exposes. `ctx.instructions` is passed unchanged, and history is
-not automatically truncated. Startup calls are excluded from model history.
+MLX requests are serialized across embedded backend copies. A request owns its
+model through any tool exchanges, then releases model objects and clears unused
+MLX allocations. Models are not cached in memory between requests. Weights stay
+in the disk cache, so subsequent requests reload them without downloading them again.
+Apple and MLX configurations can coexist without preloading multiple MLX models.
 
-## Service lifecycle
+MLX test results show the MLX process memory peak, active allocations after cleanup,
+and remaining cache. These are MLX allocator measurements, not total App memory;
+the peak includes earlier MLX use in the same App process. Actual memory use and
+model quality still need testing on a supported device.
+The MLX configuration page also explains that older devices may report MLX
+compatibility errors, and longer conversations can exceed iOS memory limits and
+cause Pythona to close unexpectedly.
 
-A streaming HTTP disconnect cancels that request. During native tool execution,
-there is no active provider HTTP connection, so Stop cannot immediately notify the
-service during that gap. Abandoned tool waits expire after `request_seconds`
-(default 120 seconds), or are cancelled when that conversation starts a new request.
-Active generation also times out after `request_seconds` per HTTP round. Expired
-runs report an error without replaying tools.
+During tool execution, HTTP hands the complete call to JavaScript. The provider
+records the run and call IDs, and Pythona executes the native tool. The next provider
+invocation returns the result and failure flag to `/resume`; the same backend
+request continues without replaying the tool.
 
-The service exits after five minutes without active requests or pending tool waits.
-Defaults are in `ai_setup/settings.py`. This runs inside Pythona's interpreter and
-is not a persistent iOS background service.
+A streaming HTTP disconnect requests cancellation. MLX cancellation is cooperative:
+a native kernel, package installation, or download already in progress must return
+before the worker can release its resources. The worker retains the inference lock
+until cleanup finishes, so a replacement request cannot load another model early.
+During native tool execution there is no active provider HTTP connection, so Stop
+cannot immediately notify the service in that gap. Abandoned tool waits and normal
+HTTP rounds expire after `request_seconds` (default 120 seconds). An initial MLX
+request uses `load_seconds` (default 900 seconds) to allow model downloads. Both can
+be adjusted in the shared service settings.
+
+The service exits after five minutes without requests or pending tool waits.
+This runs inside Pythona's interpreter and is not a persistent iOS background service.
+
+## UI
+
+The page is plain HTML, CSS, and JavaScript inside a small WKWebView container with
+a native navigation title and localized Done button. Done saves the latest form
+values before closing; a validation error keeps the page open. WebKit handles
+keyboard scrolling. The page has one document scroll area and no fixed-height
+chat output. Model checks and tests run in background threads. Closing the page
+removes the message handler and requests cancellation of active tests.
 
 ## Development
 
 The project runs directly from its clone. There is no frontend build step.
 
 Preview the actual page in a desktop browser with simulated responses and
-installation. Preview changes stay in memory and do not modify a provider:
+installation. Changes stay in memory and do not modify a provider:
 
 ```sh
 python3 main.py --preview --language en
 # Open http://127.0.0.1:8879
 ```
 
-The code is organized as follows:
-
 ```text
 main.py                Pythona entry point and desktop preview
-ai_setup/app.py        Settings actions and background tests
+ai_setup/app.py        Profile actions and background tests
 ai_setup/ui.py         WebKit presentation and JSON bridge
-ai_setup/settings.py   Configuration and provider installation
-ai_setup/model.py      Apple Foundation Models adapter
+ai_setup/settings.py   Configuration records and provider installation
+ai_setup/model.py      Apple Foundation Models adapter and backend selection
+ai_setup/mlx_model.py  MLX-LM generation, tool parsing, and cleanup
 ai_setup/server.py     HTTP lifecycle and tool result handoffs
 ai_setup/provider.js   Provider protocol and embedded service startup
 web/                   HTML, CSS, and browser code
@@ -114,17 +166,22 @@ npm ci
 npm test
 ```
 
+With MLX and MLX-LM installed on a Mac, the optional smoke check runs the actual
+adapter twice with temporary tiny Qwen3 weights. It does not download model weights
+or measure the full default model:
+
+```sh
+python3 scripts/test_mlx.py
+```
+
 For integration testing with a Pythona source checkout and an arm64 iOS simulator:
 
 ```sh
 python3 scripts/test_ios.py /path/to/Pythona --device SIMULATOR_UDID
 ```
 
-The runner temporarily links the Swift test into Pythona's test target, and removes
-that link afterward. The test loads this repository directly. It exercises the real
-WebKit bridge, provider creation and updates, all current App tool schemas, and a
-mocked model exchange through JavaScriptCore. No project sources are kept in the
-Pythona repository.
-
-Generation quality, context limits, and actual software keyboard interaction still
-need verification on a supported device.
+The runner temporarily links the Swift test into Pythona's test target and removes
+that link afterward. It exercises WebKit, multiple provider installations, updates,
+manual deletion and recreation, current App tool schemas, and a mocked model
+exchange through JavaScriptCore. No project sources remain in the Pythona repository.
+Real software keyboard interaction and full-model inference need device verification.

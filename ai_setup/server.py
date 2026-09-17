@@ -11,7 +11,7 @@ import uuid
 
 
 SERVICE_NAME = "pythona-local-llm"
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 MAX_BODY = 4 * 1024 * 1024
 
 
@@ -29,12 +29,13 @@ class ModelRun:
         self.attached = True
         self.closed = False
         self.touched = service.loop.time()
+        self.response_seconds = service.settings["load_seconds"] if request["backend"] == "mlx_lm" else service.settings["request_seconds"]
         self.task = asyncio.create_task(self._produce(request))
 
     async def invoke(self, name, arguments):
         if self.closed or name not in self.names:
             raise RuntimeError("The tool is unavailable or its model request has ended")
-        call_id = "applefm_" + uuid.uuid4().hex
+        call_id = "localtool_" + uuid.uuid4().hex
         future = asyncio.get_running_loop().create_future()
         self.pending[call_id] = (name, future)
         try:
@@ -81,7 +82,7 @@ class LocalModelService:
         self.settings = dict(settings)
         self.build_id = build_id
         self.backend = backend or model_events
-        self.status = status or model_status
+        self.status = status or (lambda: {backend: model_status({"backend": backend}) for backend in ("apple_fm", "mlx_lm")})
         self.ready = threading.Event()
         self.closed = threading.Event()
         self.error = None
@@ -94,7 +95,7 @@ class LocalModelService:
 
     def start(self):
         self.thread = threading.Thread(target=self._thread_main,
-                                       name="AppleFM HTTP", daemon=True)
+                                       name="Local model HTTP", daemon=True)
         self.thread.start()
         deadline = time.monotonic() + 5
         while not self.ready.wait(0.05):
@@ -243,6 +244,10 @@ class LocalModelService:
                 await asyncio.wait_for(writer.wait_closed(), timeout=1)
 
     def _validate_request(self, request):
+        if not isinstance(request, dict) or request.get("backend") not in ("apple_fm", "mlx_lm"):
+            raise ValueError("Unknown model backend")
+        if request["backend"] == "mlx_lm" and (not isinstance(request.get("model_id"), str) or not request["model_id"].strip()):
+            raise ValueError("Enter a Hugging Face model ID")
         if not isinstance(request, dict) or not isinstance(request.get("instructions"), str):
             raise ValueError("instructions must be a string")
         if not isinstance(request.get("owner"), str) or not 1 <= len(request["owner"]) <= 512:
@@ -262,7 +267,7 @@ class LocalModelService:
             if not isinstance(tool.get("inputSchema"), dict):
                 raise ValueError("Tool schemas must be objects")
             names.add(tool["name"])
-        tokens = request.get("maximum_response_tokens", self.settings["maximum_response_tokens"])
+        tokens = request.get("maximum_response_tokens", 800)
         if type(tokens) is not int or not 1 <= tokens <= 8192:
             raise ValueError("Invalid maximum_response_tokens")
         request["maximum_response_tokens"] = tokens
@@ -285,6 +290,7 @@ class LocalModelService:
         if not isinstance(result.get("content"), str) or type(result.get("failed")) is not bool:
             raise ValueError("Invalid tool result content or failure flag")
         run.attached = True
+        run.response_seconds = self.settings["request_seconds"]
         run.awaiting = None
         future.set_result(result)
         return run
@@ -305,7 +311,7 @@ class LocalModelService:
         disconnected = asyncio.create_task(reader.read(1))
         try:
             done, _ = await asyncio.wait((output, disconnected),
-                                         timeout=self.settings["request_seconds"],
+                                         timeout=run.response_seconds,
                                          return_when=asyncio.FIRST_COMPLETED)
             if disconnected in done:
                 return

@@ -1,7 +1,7 @@
 // DEFAULT_SETTINGS, BACKEND_PAYLOAD, and BACKEND_BUILD are injected by bundle.py.
-const SETTINGS_KEY = "apple_fm_settings";
-const RUN_NAMESPACE = "apple_fm_tool_run";
-const BOOTSTRAP_TAG = "apple_fm_service_start";
+const SETTINGS_KEY = "local_model_settings";
+const RUN_NAMESPACE = "local_model_tool_run";
+const BOOTSTRAP_TAG = "local_model_service_start";
 const FILE_TOOLS = new Set(["read_file", "write_file", "edit_file", "list_files", "grep", "glob"]);
 
 function settingsForRun() {
@@ -9,6 +9,9 @@ function settingsForRun() {
   const settings = saved === null ? DEFAULT_SETTINGS : JSON.parse(saved);
   if (!settings || !Number.isInteger(settings.port) || settings.port < 1024 || settings.port > 65535
       || typeof settings.service_token !== "string" || settings.service_token.length < 16
+      || !["apple_fm", "mlx_lm"].includes(settings.backend)
+      || typeof settings.model_id !== "string" || (settings.backend === "mlx_lm" && !settings.model_id.trim())
+      || !Number.isInteger(settings.maximum_response_tokens) || settings.maximum_response_tokens < 1 || settings.maximum_response_tokens > 8192
       || !settings.groups || ["files", "browser", "python"].some(k => typeof settings.groups[k] !== "boolean")) {
     throw new Error("Invalid local model settings. Run setup again.");
   }
@@ -83,7 +86,7 @@ async function serviceHealth(base, settings) {
     } catch (_) { return null; }
     if (!response.ok) throw new Error("The local endpoint returned HTTP " + response.status + ". Check the service configuration.");
     const health = await response.json();
-    if (health.service !== "pythona-local-llm" || health.protocol !== 2) {
+    if (health.service !== "pythona-local-llm" || health.protocol !== 3) {
       throw new Error("The endpoint is not this project's model service.");
     }
     return health;
@@ -93,7 +96,7 @@ async function serviceHealth(base, settings) {
 function startCode(settings) {
   // Double JSON encoding produces a Python string literal, not executable configuration code.
   return "import base64 as _b, zlib as _z, json as _j\n"
-    + "_scope = {'__name__': '_apple_fm_provider_backend'}\n"
+    + "_scope = {'__name__': '_local_model_provider_backend'}\n"
     + "exec(compile(_z.decompress(_b.b64decode(" + JSON.stringify(BACKEND_PAYLOAD)
     + ")), '<pythona>', 'exec'), _scope)\n"
     + "_config = _j.loads(" + JSON.stringify(JSON.stringify(settings)) + ")\n"
@@ -187,7 +190,7 @@ async function stream(ctx, emit) {
     if (!ctx.nativeTools.some(tool => tool.name === "run_python")) {
       throw new Error("Starting the local service requires the App's run_python tool.");
     }
-    emit({ type: "native_tool_call", id: "applefm_start_" + crypto.randomUUID(),
+    emit({ type: "native_tool_call", id: "localmodel_start_" + crypto.randomUUID(),
       name: "run_python", displayName: "Start local model service", metadata: { [BOOTSTRAP_TAG]: true },
       input: { code: startCode(settings) } });
     return;
@@ -197,7 +200,8 @@ async function stream(ctx, emit) {
   if (pending && !allowed.has(pending.result.name)) throw new Error("The pending tool is no longer enabled.");
   const owner = JSON.stringify([ctx.provider.id, ctx.conversationId]);
   const body = pending ? { owner, ...pending }
-    : { owner, instructions: ctx.instructions, messages: transcriptMessages(records), tools,
+    : { owner, backend: settings.backend, model_id: settings.model_id,
+        instructions: ctx.instructions, messages: transcriptMessages(records), tools,
         maximum_response_tokens: settings.maximum_response_tokens };
   const response = await fetch(base + (pending ? "/resume" : "/generate"), {
     method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + settings.service_token },
