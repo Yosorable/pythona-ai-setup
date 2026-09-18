@@ -44,6 +44,8 @@ test fails.
 
 After pulling project updates, open each existing provider and choose **Save Changes**
 to replace its embedded backend with the updated code.
+When upgrading from a backend without the process-local service registry, restart
+Pythona once after updating your providers to clear any workers left by the old code.
 
 Opening the page, opening an editor, and **Refresh** check saved provider IDs against
 Pythona. Confirmed missing IDs are removed from the list and the local record.
@@ -134,6 +136,13 @@ The generated JavaScript embeds the complete compressed Python backend. After
 installation it does not depend on this repository's files. All configurations
 share one authenticated service at `127.0.0.1:8768`. Each request identifies its
 backend and model, so changing an MLX profile does not change another profile.
+
+Backend copies also share a process-local service registry. If the HTTP listener
+is lost while a cached model remains alive, startup closes the previous service
+and waits for its worker to finish releasing resources before creating a replacement.
+Healthy services keep reusing their cached model. A failed health check does not
+interrupt an active request, and cleanup timeouts leave the previous owner tracked
+so a later retry can complete the handoff.
 
 If the service is absent, JavaScript uses its embedded code through `run_python`
 to start a daemon thread with an asyncio loop. Startup returns promptly and

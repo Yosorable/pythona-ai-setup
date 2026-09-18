@@ -312,6 +312,79 @@ class MLXTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.active, 0)
         self.assertFalse(service.mlx.lease.locked())
 
+    async def test_restarting_a_lost_listener_closes_the_previous_model_owner(self):
+        self.chunks = ['First', 'Second']
+        listeners = []
+        created = []
+        original_start = asyncio.start_server
+
+        async def track_listener(*args, **kwargs):
+            listener = await original_start(*args, **kwargs)
+            listeners.append(listener)
+            return listener
+
+        def backend_copy():
+            namespace = load_backend()
+            namespace['prepare_mlx_dependencies'] = self.prepare_dependencies
+            service_type = namespace['LocalModelService']
+            def create(settings, build):
+                service = service_type(settings, build)
+                created.append(service)
+                self.services.append(service)
+                self.workers.append(service.mlx)
+                return service
+            namespace['LocalModelService'] = create
+            return namespace
+
+        config = {**service_defaults(), 'port': 0}
+        with patch.object(asyncio, 'start_server', track_listener):
+            first_backend = backend_copy()
+            health = await asyncio.to_thread(first_backend['start_service'], config, 'same-build')
+            config['port'] = health['port']
+            first = created[-1]
+            _, events = await asyncio.to_thread(self.http_generate, first)
+            self.assertEqual(events[-1]['type'], 'finish')
+            self.assertTrue(first.mlx.leased)
+            # A fresh bootstrap with a healthy listener must reuse the cached worker.
+            await asyncio.to_thread(backend_copy()['start_service'], config, 'same-build')
+            self.assertEqual(len(created), 1)
+
+            # Lose only the HTTP listener, as can happen across iOS suspension.
+            async def lose_listener():
+                listeners[0].close()
+                await listeners[0].wait_closed()
+            await asyncio.wrap_future(asyncio.run_coroutine_threadsafe(lose_listener(), first.loop))
+            self.assertFalse(first.closed.is_set())
+
+            entered, release = threading.Event(), threading.Event()
+            def slow_cleanup():
+                entered.set()
+                if not release.wait(3):
+                    raise RuntimeError('Test cleanup was not released')
+            self.mx.synchronize = slow_cleanup
+            second_backend = backend_copy()
+            # Simulate a cleanup timeout, then retry while the same owner is still closing.
+            try:
+                with patch.object(first.closed, 'wait', return_value=False):
+                    with self.assertRaisesRegex(RuntimeError, 'still stopping'):
+                        await asyncio.to_thread(second_backend['start_service'], config, 'same-build')
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1))
+                self.assertTrue(first.mlx.lease.locked())
+                self.assertIs(second_backend['service_registry']().instances[config['port']], first)
+                restart = asyncio.create_task(asyncio.to_thread(second_backend['start_service'], config, 'same-build'))
+                await asyncio.sleep(0.05)
+                self.assertFalse(restart.done())
+                self.assertEqual(len(created), 1, 'A replacement started before the old model was released')
+            finally:
+                release.set()
+            await asyncio.wait_for(restart, 3)
+            second = created[-1]
+            _, events = await asyncio.to_thread(self.http_generate, second)
+            self.assertEqual(events[-1]['type'], 'finish', events)
+            self.assertTrue(first.closed.is_set(), 'The lost listener left its model worker running')
+            self.assertEqual(len(self.loads), 2)
+            self.assertEqual(self.peak_active, 1)
+
     async def test_switching_to_apple_unloads_mlx_before_starting_generation(self):
         async def apple(request, invoke):
             self.assertEqual(self.active, 0)

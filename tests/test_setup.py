@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from ai_setup.bundle import backend_bundle, bootstrap_source, build_provider, load_backend
@@ -184,6 +184,62 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["type"], "error")
         self.assertTrue(service.closed.wait(2))
+
+    def test_failed_health_check_does_not_interrupt_an_active_registered_run(self):
+        async def backend(request, invoke):
+            await invoke('read_file', {'path': 'test.py'})
+            yield {'type': 'finish', 'reason': 'stop'}
+
+        service = self.start(backend)
+        registry = self.namespace['service_registry']()
+        registry.instances[service.port] = service
+        config = {**service.settings, 'port': service.port}
+        admitted = []
+        original_stop = service.stop_for_restart
+
+        def stop_after_admission(only_if_idle):
+            # Arrive after the failed health probe, at the old check/stop race boundary.
+            status, body = self.request(service, '/generate', self.tool_payload())
+            self.assertEqual(status, 200)
+            self.assertEqual(json.loads(body)['type'], 'tool_request')
+            admitted.append(service.run)
+            return original_stop(only_if_idle)
+
+        with patch.dict(self.namespace, {'service_json': Mock(side_effect=ConnectionError)}):
+            with patch.object(service, 'stop_for_restart', side_effect=stop_after_admission):
+                with self.assertRaisesRegex(RuntimeError, 'busy'):
+                    self.namespace['start_service'](config, 'test-build')
+        self.assertEqual(len(admitted), 1)
+        self.assertIs(service.run, admitted[0])
+        self.assertFalse(admitted[0].closed)
+        self.assertFalse(service.stop_event.is_set())
+
+    def test_restart_reservation_rejects_new_generation_admission(self):
+        async def backend(request, invoke):
+            self.fail('A stopping service must not start another model run')
+            yield
+
+        service = self.start(backend)
+        async def reserve_and_admit():
+            service.stop_event.set()
+            with self.assertRaisesRegex(RuntimeError, 'restarting'):
+                await service._new_run(self.payload())
+            self.assertIsNone(service.run)
+        asyncio.run_coroutine_threadsafe(reserve_and_admit(), service.loop).result(timeout=3)
+
+    def test_lost_listener_does_not_bypass_registered_service_credentials(self):
+        async def backend(request, invoke):
+            yield {'type': 'finish', 'reason': 'stop'}
+
+        service = self.start(backend)
+        registry = self.namespace['service_registry']()
+        registry.instances[service.port] = service
+        config = {**service.settings, 'port': service.port, 'service_token': 'different-token'}
+        with patch.dict(self.namespace, {'service_json': Mock(side_effect=ConnectionError)}):
+            with self.assertRaisesRegex(RuntimeError, 'credentials'):
+                self.namespace['start_service'](config, 'test-build')
+        self.assertFalse(service.stop_event.is_set())
+        self.assertIs(registry.instances[service.port], service)
 
     def test_timeout_cancels_model_and_request_never_counts_as_idle(self):
         self.namespace["HEARTBEAT_SECONDS"] = 0.05

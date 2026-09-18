@@ -1,13 +1,17 @@
 """Loopback-only HTTP service with a dedicated event loop and model tasks."""
 
 import asyncio
+import concurrent.futures
 import contextlib
 import hmac
 import http.client
 import json
+import sys
 import threading
 import time
+import types
 import uuid
+import weakref
 
 
 SERVICE_NAME = "pythona-local-llm"
@@ -121,6 +125,35 @@ class LocalModelService:
             with contextlib.suppress(RuntimeError):
                 self.loop.call_soon_threadsafe(self.stop_event.set)
 
+    def stop_for_restart(self, only_if_idle):
+        """Reserve shutdown on the HTTP loop, atomically with request admission."""
+        if self.closed.is_set():
+            return True
+        result = concurrent.futures.Future()
+
+        def reserve():
+            if not result.set_running_or_notify_cancel():
+                return
+            busy = self.admitting or self.run is not None or self.mlx.busy
+            allowed = not only_if_idle or self.stop_event.is_set() or not busy
+            if allowed:
+                self.stop_event.set()
+            result.set_result(allowed)
+
+        try:
+            self.loop.call_soon_threadsafe(reserve)
+        except RuntimeError:
+            if self.closed.wait(5):
+                return True
+            raise RuntimeError("The previous local model service could not be stopped. Try again shortly.") from None
+        try:
+            return result.result(timeout=5)
+        except concurrent.futures.TimeoutError:
+            result.cancel()
+            if self.closed.is_set():
+                return True
+            raise RuntimeError("The previous local model service is not responding. Try again shortly.") from None
+
     def _thread_main(self):
         try:
             asyncio.run(self._serve())
@@ -151,6 +184,7 @@ class LocalModelService:
                     if not self.active and self.run is None and not self.mlx.busy and now - self.last_activity >= self.settings["idle_seconds"]:
                         break
         finally:
+            self.stop_event.set()
             self.mlx.close()
             listener.close()
             await listener.wait_closed()
@@ -169,6 +203,8 @@ class LocalModelService:
 
     async def _new_run(self, request):
         # Reserve admission before awaiting cancellation; new requests never queue here.
+        if self.stop_event.is_set():
+            raise ModelBusyError("The local model service is restarting. Try again shortly.")
         if self.admitting:
             raise ModelBusyError("The local model is busy. Try again shortly.")
         self.admitting = True
@@ -378,8 +414,30 @@ def service_json(settings, path, method="GET", timeout=1):
         connection.close()
 
 
+def service_registry():
+    # A lost HTTP listener does not mean its Python worker or model has exited.
+    # Keep ownership discoverable across independently embedded backend copies.
+    state = types.ModuleType("_pythona_ai_setup_services")
+    state.startup_lock = threading.Lock()
+    state.instances = weakref.WeakValueDictionary()
+    return sys.modules.setdefault(state.__name__, state)
+
+
 def start_service(settings, build_id):
-    """Return after startup; the worker retains the backend without occupying pythonThread."""
+    """Recover the HTTP service only after its previous model owner has stopped."""
+    state = service_registry()
+    if not state.startup_lock.acquire(timeout=5):
+        raise RuntimeError("The local model service is restarting. Try again shortly.")
+    try:
+        return _start_service(settings, build_id, state)
+    finally:
+        state.startup_lock.release()
+
+
+def _start_service(settings, build_id, state):
+    previous = state.instances.get(settings["port"])
+    if previous is not None and previous.closed.is_set():
+        previous = None
     try:
         existing = service_json(settings, "/health")
     except (ConnectionError, OSError, http.client.HTTPException):
@@ -387,13 +445,29 @@ def start_service(settings, build_id):
     if existing is not None:
         if existing.get("service") != SERVICE_NAME or existing.get("protocol") != PROTOCOL_VERSION:
             raise RuntimeError("The endpoint is not this project's model service")
-        if existing.get("build") == build_id:
+        stopping = previous is not None and (previous.mlx.closing
+            or (previous.stop_event is not None and previous.stop_event.is_set()))
+        if existing.get("build") == build_id and not stopping:
             return existing
         service_json(settings, "/shutdown", method="POST")
+    if previous is not None:
+        if not hmac.compare_digest(previous.settings["service_token"], settings["service_token"]):
+            raise RuntimeError("Local service credentials do not match")
+        only_if_idle = existing is None and previous.build_id == build_id
+        if not previous.stop_for_restart(only_if_idle):
+            raise ModelBusyError("The local model is busy. Wait for the current request to finish and try again.")
+        if not previous.closed.wait(5):
+            raise RuntimeError("The previous local model service is still stopping. Try again shortly.")
     deadline = time.monotonic() + 5
     while True:
         try:
-            return LocalModelService(settings, build_id).start().health()
+            service = LocalModelService(settings, build_id)
+            state.instances[settings["port"]] = service
+            service.start()
+            if service.port != settings["port"]:
+                del state.instances[settings["port"]]
+                state.instances[service.port] = service
+            return service.health()
         except OSError:
             # Resolve concurrent startup through the listener, not run_python globals.
             try:
