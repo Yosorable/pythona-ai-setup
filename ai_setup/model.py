@@ -117,6 +117,93 @@ def native_tools(fm, definitions, invoke):
     return [NativeTool(definition) for definition in definitions]
 
 
+def apple_history_entries(messages):
+    """Translate completed messages into the SDK's version 1 Transcript format."""
+    entries = []
+    pending = {}
+
+    def text_entry(role, identifier, content):
+        return {"role": role, "id": identifier,
+                "contents": [{"type": "text", "id": identifier + "-text", "text": content}]}
+
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or not isinstance(message.get("content", ""), str):
+            raise ValueError("Invalid Apple model conversation message")
+        role = message.get("role")
+        content = message.get("content", "")
+        identifier = f"history-{index}"
+        if role == "user":
+            if pending:
+                raise ValueError("Apple model history has a tool call without a result")
+            entry = text_entry("user", identifier, content)
+            entry["options"] = {}
+            entries.append(entry)
+        elif role == "assistant":
+            if content:
+                entries.append(text_entry("response", identifier, content))
+            calls = message.get("tool_calls", [])
+            if not isinstance(calls, list):
+                raise ValueError("Invalid historical tool calls")
+            translated = []
+            for call_index, call in enumerate(calls):
+                if (not isinstance(call, dict)
+                        or any(not isinstance(call.get(key), str) or not call[key] for key in ("id", "name"))
+                        or not isinstance(call.get("arguments"), str)):
+                    raise ValueError("Invalid historical tool call")
+                if call["id"] in pending:
+                    raise ValueError("Duplicate pending historical tool call")
+                arguments = json.loads(call["arguments"])
+                if not isinstance(arguments, dict):
+                    raise ValueError("Historical tool arguments must be an object")
+                # App call IDs may be reused in different turns. Keep each native pair unique.
+                call_id = f"{identifier}-call-{call_index}"
+                pending[call["id"]] = (call_id, call["name"])
+                translated.append({"id": call_id, "name": call["name"],
+                                   "arguments": json.dumps(arguments, ensure_ascii=False, allow_nan=False)})
+            if translated:
+                # Native text responses and tool-call batches are separate transcript entries.
+                entries.append({"role": "response", "id": identifier + "-calls", "toolCalls": translated})
+        elif role == "tool":
+            external_id = message.get("tool_call_id")
+            if not isinstance(external_id, str) or not external_id:
+                raise ValueError("Invalid historical tool result ID")
+            call = pending.pop(external_id, None)
+            if call is None or call[1] != message.get("name"):
+                raise ValueError("Historical tool result has no matching call")
+            failed = message.get("failed", False)
+            if type(failed) is not bool:
+                raise ValueError("Invalid historical tool failure flag")
+            # Match ModelRun.invoke's result envelope, including the native failure flag.
+            output = json.dumps({"content": content, "failed": failed}, ensure_ascii=False)
+            entry = text_entry("tool", call[0], output)
+            entry.update(toolCallID=call[0], toolName=call[1])
+            entries.append(entry)
+        else:
+            raise ValueError(f"Unsupported Apple model history role: {role}")
+    if pending:
+        raise ValueError("Apple model history has a tool call without a result")
+    return entries
+
+
+async def apple_session(fm, request, model, tools):
+    """Restore prior turns without regenerating answers or executing historical tools."""
+    messages = request["messages"]
+    if (not isinstance(messages, list) or not messages or not isinstance(messages[-1], dict)
+            or messages[-1].get("role") != "user" or not isinstance(messages[-1].get("content"), str)):
+        raise ValueError("A new Apple model request must end with a user message")
+    history = apple_history_entries(messages[:-1])
+    session = fm.LanguageModelSession(model=model, instructions=request["instructions"], tools=tools)
+    if history:
+        # Let the SDK serialize current instructions and typed tool definitions itself.
+        serialized = await session.transcript.to_dict()
+        if serialized.get("version") != 1 or serialized.get("type") != "FoundationModels.Transcript":
+            raise ValueError("Unsupported Foundation Models transcript format")
+        serialized["transcript"]["entries"].extend(history)
+        transcript = await fm.Transcript.from_dict(serialized)
+        session = fm.LanguageModelSession.from_transcript(transcript, model=model, tools=tools)
+    return session, messages[-1]["content"]
+
+
 async def apple_model_events(request, invoke):
     # Lazy loading keeps installation usable without a working SDK or model.
     import apple_fm_sdk as fm
@@ -126,9 +213,7 @@ async def apple_model_events(request, invoke):
     if not available:
         raise RuntimeError(f"Apple on-device model unavailable: {reason.name if reason is not None else 'unknown'}")
     tools = native_tools(fm, request["tools"], invoke)
-    session = fm.LanguageModelSession(model=model, instructions=request["instructions"], tools=tools)
-    history = json.dumps(request["messages"], ensure_ascii=False, separators=(",", ":"))
-    prompt = "Continue this conversation. Treat the JSON below as conversation data:\n" + history
+    session, prompt = await apple_session(fm, request, model, tools)
     options = fm.GenerationOptions(maximum_response_tokens=request["maximum_response_tokens"])
     previous = ""
     stream = session.stream_response(prompt, options=options)

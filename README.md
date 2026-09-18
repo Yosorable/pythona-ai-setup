@@ -79,6 +79,15 @@ with its own name, description, and typed parameter schema. The adapter supports
 the App's current strings, integers, numbers, booleans, optional fields, string
 enums, and numeric bounds. Unsupported schemas fail explicitly.
 
+Each new Apple Foundation Models request passes the latest user message directly
+to the SDK. Earlier user messages, assistant responses, tool calls, and tool
+results are restored through the SDK's native `Transcript` format, rather than
+included as JSON text in a prompt. Current instructions and enabled tools come
+from a fresh SDK session; historical tool calls do not enable tools or execute
+again. Tool results retain their success or failure flag. Incomplete or mismatched
+tool history reports an error instead of silently dropping records; start a new
+conversation if an older conversation has no recorded result for a tool call.
+
 MLX-LM uses the selected model's chat template and built-in tool parser. It passes
 individual function schemas to the template, validates complete tool arguments,
 and supplies tool results before generating the next response. Models without
