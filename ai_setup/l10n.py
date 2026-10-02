@@ -43,10 +43,14 @@ class Localizer:
     def error(self, error):
         # Keep SDK/network diagnostics intact; translate known user-facing errors.
         text = str(error)
+        if text in STRINGS["en"]:
+            return self(text)
         if text == "Connection name must not be empty":
             return self("empty_name")
         if text == "Enter a Hugging Face model ID":
             return self("invalid_model_id")
+        if text == "Enter a Codex model ID":
+            return self("invalid_codex_model")
         if text == "Remove this provider in Pythona's AI Assistant settings first":
             return self("remove_help")
         for reason in ("APPLE_INTELLIGENCE_NOT_ENABLED", "DEVICE_NOT_ELIGIBLE", "MODEL_NOT_READY", "UNKNOWN"):

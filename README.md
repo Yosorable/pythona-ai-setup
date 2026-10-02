@@ -1,16 +1,22 @@
 # Pythona AI Setup
 
-Configure local model providers for Pythona AI Assistant. Clone this repository in
+Configure model providers for Pythona AI Assistant. Clone this repository in
 Pythona and run **`main.py`** from the project root.
 
-Create independent configurations for **Apple Foundation Models** and **MLX-LM**.
-Each configuration has its own name, tool choices, model selection, and installed
-provider ID. Installation works even when the model is unavailable.
+Create independent configurations for **Apple Foundation Models**, **MLX-LM**, **Codex**,
+and **ChatGPT** (Sign in with ChatGPT).
+Each configuration has its own name, model selection, and installed provider ID.
+Local models also have tool choices. Codex and ChatGPT require completed account
+authorization before adding or saving a provider. Model availability is not an
+installation prerequisite.
 
 ## Requirements
 
 - Pythona with the `pythona.ai` Custom Provider API v2.
 - Pythona's bundled rubicon-objc for the WebKit container.
+- Codex: a ChatGPT account with Codex access and an internet connection.
+- ChatGPT: an eligible ChatGPT Plus or Pro account with permission to use its plan
+  in this app, an internet connection, and Pythona's bundled `cryptography` package.
 - Apple Foundation Models: a supported device with Apple Intelligence and
   `apple-fm-sdk` for inference.
 - MLX-LM: Pythona's bundled MLX. On the first test or assistant request, the backend
@@ -25,12 +31,19 @@ Japanese, Korean, and Russian. Light and dark appearances are supported.
 ## Use
 
 1. Run `main.py` in Pythona. The home page lists installed providers managed by this
-   project. Choose **Add** to open a new provider form.
-2. Choose the backend, connection name, and tools. File tools are enabled by default;
-   browser and Python tools are initially disabled.
+   project. Choose **Add**, then select a provider to open its configuration form.
+   Cancelling the selection does not create a draft or install anything.
+2. Enter a connection name. For local models, choose the tools:
+   file tools are enabled by default; browser and Python tools are initially disabled.
+   Codex and ChatGPT use all native tools supplied by Pythona, without a separate tool selector.
 3. For MLX-LM, enter a Hugging Face model ID. The default is
    `mlx-community/Qwen3-1.7B-4bit`, matching Pythona's `llm_demo.py` example.
    Its first download is about 1 GB.
+   For Codex, choose **Sign in with ChatGPT**, complete authorization in the
+   in-app Safari window, and select a model and reasoning effort available to your
+   account. The initial model is `gpt-6.1-sol`; it can be edited without updating Pythona.
+   For ChatGPT, choose **Continue with ChatGPT** and authorize ChatGPT plan usage.
+   Available models are suggested after sign-in; you can also enter a model ID.
 4. Optionally run a test in the separate **Test Conversation** section.
 5. Choose **Add to AI Assistant**. This installs the provider, saves its local record,
    and returns to the list. Select the connection in Pythona's AI Assistant settings
@@ -39,8 +52,9 @@ Japanese, Korean, and Russian. Light and dark appearances are supported.
 Tap a list entry to edit its model, name, or tools, then choose **Save Changes** to
 update the same provider ID. **Cancel** or **Back** discards unsubmitted edits.
 Model tests use the current form without saving it; testing never creates a provider.
-Installation and saving remain available even when the model is unavailable or a
-test fails.
+Successful model tests are optional. Local models can be added even when unavailable;
+Codex and ChatGPT require account authorization, including ChatGPT plan permission
+for the ChatGPT provider. An unrelated inference failure does not block saving.
 
 After pulling project updates, open each existing provider and choose **Save Changes**
 to replace its embedded backend with the updated code.
@@ -56,23 +70,134 @@ Only IDs saved by this project are queried; Pythona's other providers are not en
 To delete an installed provider, remove it in Pythona's AI Assistant settings.
 Refresh this page to remove the corresponding list entry and setup record.
 
+## Codex sign-in
+
+Sign-in uses `SFSafariViewController` and OAuth authorization code flow with PKCE.
+A temporary Python HTTP listener receives the callback at
+`http://127.0.0.1:1455/auth/callback`, with its socket bound only to the loopback
+interface. The listener starts before the browser
+opens. Another service occupying this port reports an error without being stopped.
+
+The listener checks actual HTTP responses while waiting for authorization.
+Native foreground notifications also wake this check, including while Safari
+covers the setup page. If iOS has invalidated the sockets, the old listener exits
+before the same login rebinds the same port. Its state, PKCE verifier, browser URL,
+and ten-minute deadline are preserved. If the browser already displayed a failed
+callback before recovery, reload that page. An expired login must be started again.
+Process-local ownership also closes an older login before another setup run starts
+one. Closing Safari, cancelling, leaving the form, or closing setup discards the
+pending attempt and prevents late authorization results from being saved.
+
+Successful sign-in remains a draft until **Add to AI Assistant** or **Save Changes**.
+**Sign in again** replaces the account only when saved. Testing uses the current
+form without installing a provider or saving its model, name, or reasoning effort.
+A test may rotate credentials: draft credentials remain in memory; installed
+credentials are updated in provider storage so the next request can use the new
+refresh token. Wait for a test to finish, including cancellation, before saving or
+signing in again. Reopening the same profile keeps its pending test visible and
+does not start a second test. Setup model discovery and tests for one profile run
+sequentially and read the latest saved credentials before making requests.
+Adding or saving a Codex provider requires a completed sign-in with account credentials.
+The button stays disabled until authorization succeeds, and installation also
+checks credentials before creating or updating a provider. A model test is optional.
+
+`ai_setup/codex_provider.js` is a repository-owned copy initially adapted from
+Pythona's Codex demo. Setup never reads the App's template. It embeds this project's
+JavaScript with the selected model and reasoning effort. All tools in `ctx.nativeTools`
+are passed through; hosted web search follows Pythona's web-search preference. The installed
+provider contacts Codex directly, refreshes its own tokens, and preserves Responses
+checkpoints across native tool rounds. It does not start the local model server.
+Update this repository and save an existing Codex provider to update its code.
+
+Cloud model tests allow up to 120 seconds, including quiet reasoning periods.
+Cancellation interrupts an active HTTP response, and blank-line heartbeats do not
+extend that deadline. Completed refusal responses appear as text in both the test
+and installed provider.
+
+The provider and setup test advertise Codex client version `0.160.0`, with matching
+`Version`, `User-Agent`, and Responses beta headers. This follows the
+[official stable release](https://github.com/openai/codex/releases/tag/rust-v0.160.0);
+the header layout was also checked against
+[OpenMinis's Codex requests](https://github.com/OpenMinis/OpenMinis/blob/b4c0661d5631ebab4d1a2e6f3fd4c805d4030a6c/src/ios/Providers/OpenAI/OpenAIProvider.swift#L924).
+The callback host follows the
+[official login implementation](https://github.com/openai/codex/blob/rust-v0.160.0/codex-rs/login/src/server.rs#L183).
+
 ## Storage and privacy
 
 `settings.local.json`, next to `main.py`, contains an installed `profiles` array and
-shared `service` settings. Every profile has its own local `id`
+shared `service` settings. Its optional `chatgpt_host_id` stores the random
+installation UUID used for public ChatGPT sign-in. Every profile has its own local `id`
 and a separate `provider_id` returned by Pythona. This file is ignored by Git.
 Drafts and navigation state stay in memory. There is no migration from previous
 storage formats; delete the old JSON file before using this version. Deleting this
 file forgets its provider IDs but does not delete installed providers from Pythona.
 
-Each installed provider contains its runtime configuration under
-`local_model_settings` in that provider's localStorage. Updating replaces its
+Each installed local-model provider contains its runtime configuration under
+`local_model_settings` in that provider's localStorage. Codex uses `codex_settings`
+and stores account credentials in that same provider's localStorage; credentials
+are not included in `settings.local.json` or sent to the setup web page.
+ChatGPT uses `chatgpt_settings` and stores its complete credential record under
+`chatgpt_auth`. These are Pythona's native per-provider storage values, not browser
+localStorage. A refresh replaces the ChatGPT credential record in one write.
+Refresh recovery reuses newer credentials already saved by another request.
+ChatGPT also identifies each login locally so a delayed successful refresh can
+recover that login after a concurrent failure, without replacing a later login.
+This does not serialize refreshes across installed JavaScript contexts.
+The installation UUID is generated and saved in `settings.local.json` before the
+first ChatGPT sign-in and reused across accounts and launches. Saving this identifier
+does not save form drafts or account credentials.
+Updating replaces its
 JavaScript and this configuration while preserving unrelated localStorage keys.
 The setup page itself uses a nonpersistent WebKit data store.
 
 MLX dependencies and model downloads contact PyPI and Hugging Face respectively.
-Model files use Hugging Face's normal local cache. Prompts and model responses are
-processed on the device. Enabled tools can make their own network requests.
+Model files use Hugging Face's normal local cache. Apple Foundation Models and
+MLX-LM process prompts and responses on the device. Codex sign-in and token refresh
+contact `auth.openai.com`; Codex requests send prompts, conversation history, enabled
+tool schemas, and tool results to `chatgpt.com`. ChatGPT sign-in contacts
+`auth.openai.com`, and its model discovery and inference contact `api.openai.com`.
+Enabled tools can make their own
+network requests.
+
+## Sign in with ChatGPT provider
+
+The **ChatGPT** entry is independent of **Codex**. Both can be installed for
+comparison; they keep separate provider IDs, settings, and credentials.
+This entry follows OpenAI's public
+[local-client registration flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)
+and [ChatGPT-plan Responses interface](https://developers.openai.com/siwc/token-sharing-open-source/models-and-inference).
+It needs no developer API key, client secret, or application backend.
+
+The first sign-in starts with `dynamic_agent_client`; the callback's issued client
+ID is retained for code exchange and later sign-ins to that account and workspace.
+An explicit retry after failed code exchange reuses the issued ID while the form
+remains open. Sign-in uses PKCE and an OIDC nonce, then verifies the ID token's
+RS256 signature against OpenAI's published JWKS, issuer, audience, expiry, nonce,
+and returning account identity. The `cryptography` import and network work run on
+the OAuth worker. Tokens and granted scopes are kept together; identity-only
+sign-in does not enable inference or allow adding or saving a provider. Signing in again can request the missing plan
+permission. The first successful grant explains plan usage and links to ChatGPT
+usage settings.
+
+The recoverable loopback listener and in-app Safari presentation are shared with
+Codex. All draft, cancellation, foreground recovery, and explicit-save behavior
+described above also applies to ChatGPT. Account model discovery is a background
+request; failures do not prevent entering a model ID or adding the provider.
+
+`chatgpt_provider.js` supplies public-route authentication, token refresh, errors,
+and namespaced tool definitions. Installation bundles it with the Responses
+streaming and history engine in `codex_provider.js`, without depending on either
+file at runtime. Requests use `api.openai.com/v1/responses`, `store: false`, and
+`stream: true`. All Pythona native tools are functions in the `pythona` namespace.
+Tool calls, outputs, and encrypted reasoning are retained between invocations;
+checkpoints are scoped to the registered account and selected model.
+
+The route's [preview limitations](https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations)
+apply. Hosted web search depends on model/account availability. Subscription or
+stream failures do not complete a turn or execute pending native tools. Repeated
+authorization failures stop after one token refresh; quota and policy errors do
+not trigger an OAuth retry loop. Setup tests use the same public route and preserve
+rotated credentials even when inference fails or is cancelled.
 
 ## Model adapters
 
@@ -132,9 +257,9 @@ dependency installation runs only inside Pythona on iOS.
 
 ## Service and memory lifecycle
 
-The generated JavaScript embeds the complete compressed Python backend. After
-installation it does not depend on this repository's files. All configurations
-share one authenticated service at `127.0.0.1:8768`. Each request identifies its
+For local models, the generated JavaScript embeds the complete compressed Python
+backend. After installation it does not depend on this repository's files. All
+local-model configurations share one authenticated service at `127.0.0.1:8768`. Each request identifies its
 backend and model, so changing an MLX profile does not change another profile.
 
 Backend copies also share a process-local service registry. If the HTTP listener
@@ -234,6 +359,13 @@ ai_setup/mlx_dependencies.py MLX dependency selection and coordinated installati
 ai_setup/mlx_model.py        MLX-LM generation, tool parsing, and cleanup
 ai_setup/server.py           HTTP lifecycle and tool result handoffs
 ai_setup/provider.js         Provider protocol and embedded service startup
+ai_setup/codex_provider.js   Repository-owned Codex provider and token refresh
+ai_setup/codex_auth.py       OAuth PKCE login and recoverable loopback listener
+ai_setup/codex_probe.py      Codex test requests and credential rotation
+ai_setup/chatgpt_provider.js Public ChatGPT transport bundled with the Responses engine
+ai_setup/chatgpt_auth.py     Dynamic registration, verified identity, and token refresh
+ai_setup/chatgpt_probe.py    Account model discovery and public Responses tests
+ai_setup/responses_probe.py Shared bounded SSE reader for cloud model tests
 web/                         HTML, CSS, and browser code
 tests/                       Python, JavaScript, and browser checks
 ```

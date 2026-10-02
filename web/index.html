@@ -22,14 +22,23 @@
       </div>
       <div class="list-footer"><p data-i18n="providers_help"></p><button id="refresh" class="compact" data-i18n="refresh" disabled></button></div>
     </section>
+    <section id="choose" hidden>
+      <div class="detail-heading"><button id="choose-back" class="compact" data-i18n="cancel" disabled></button><h1 data-i18n="choose_provider"></h1></div>
+      <p class="section-description" data-i18n="choose_provider_help"></p>
+      <div class="panel provider-list">
+        <button id="choose-apple_fm" class="provider-choice" data-backend="apple_fm" disabled><span class="profile-copy"><span class="choice-title" data-i18n="apple_backend"></span><span class="choice-detail" data-i18n="choose_apple_help"></span></span><span class="chevron">›</span></button>
+        <button id="choose-mlx_lm" class="provider-choice" data-backend="mlx_lm" disabled><span class="profile-copy"><span class="choice-title">MLX-LM</span><span class="choice-detail" data-i18n="choose_mlx_help"></span></span><span class="chevron">›</span></button>
+        <button id="choose-codex" class="provider-choice" data-backend="codex" disabled><span class="profile-copy"><span class="choice-title">Codex</span><span class="choice-detail" data-i18n="choose_codex_help"></span></span><span class="chevron">›</span></button>
+        <button id="choose-chatgpt" class="provider-choice" data-backend="chatgpt" disabled><span class="profile-copy"><span class="choice-title">ChatGPT</span><span class="choice-detail" data-i18n="choose_chatgpt_help"></span></span><span class="chevron">›</span></button>
+      </div>
+    </section>
     <section id="detail" hidden>
       <div class="detail-heading"><button id="back" class="compact" data-i18n="back" disabled></button><h1 id="detail-title"></h1></div>
       <p id="detail-notice" class="notice" hidden></p>
       <div id="editor" class="panels">
         <section class="panel settings-panel">
           <div class="section-heading"><span class="section-number">01</span><h2 data-i18n="settings"></h2></div>
-          <label class="field-label" for="backend" data-i18n="backend"></label>
-          <select id="backend" disabled><option value="apple_fm" data-i18n="apple_backend"></option><option value="mlx_lm">MLX-LM</option></select>
+          <p id="backend-name" class="backend-name"></p>
           <div id="availability" class="availability" data-kind="checking"><span class="status-dot"></span><span id="availability-text" data-i18n="checking"></span></div>
           <label class="field-label" for="name" data-i18n="connection_name"></label>
           <input id="name" type="text" autocomplete="off" spellcheck="false" disabled>
@@ -38,6 +47,25 @@
             <input id="model-id" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" disabled>
             <p class="hint" data-i18n="model_help"></p>
             <p class="model-notice" data-i18n="mlx_device_warning"></p>
+          </div>
+          <div id="codex-settings" class="model-field" hidden>
+            <label id="cloud-model-label" class="field-label" for="codex-model" data-i18n="codex_model"></label>
+            <input id="codex-model" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" disabled>
+            <datalist id="chatgpt-models"></datalist>
+            <p id="cloud-model-help" class="hint" data-i18n="codex_model_help"></p>
+            <p id="models-status" class="test-status" hidden></p>
+            <label class="field-label" for="reasoning-effort" data-i18n="reasoning_effort"></label>
+            <select id="reasoning-effort" disabled>
+              <option value="none" data-i18n="effort_none"></option><option value="minimal" data-i18n="effort_minimal"></option>
+              <option value="low" data-i18n="effort_low"></option><option value="medium" data-i18n="effort_medium"></option>
+              <option value="high" data-i18n="effort_high"></option><option value="xhigh" data-i18n="effort_xhigh"></option>
+              <option value="max" data-i18n="effort_max"></option>
+            </select>
+            <p id="auth-account" class="auth-account" hidden></p>
+            <p id="auth-status" class="test-status"></p>
+            <button id="login" class="secondary" data-i18n="auth_login" disabled></button>
+            <div id="chatgpt-usage" hidden><p id="plan-state" class="test-status"></p><button id="manage-usage" class="compact" data-i18n="chatgpt_manage_usage" disabled></button></div>
+            <p class="hint" data-i18n="auth_save_help"></p>
           </div>
           <fieldset id="tools" disabled>
             <legend data-i18n="tools"></legend>
@@ -57,7 +85,7 @@
               <input type="checkbox" id="python" class="switch">
             </label>
           </fieldset>
-          <p class="hint" data-i18n="tools_help"></p>
+          <p id="tools-help" class="hint" data-i18n="tools_help"></p>
           <button id="install" class="primary" disabled><span data-i18n="install"></span><span>→</span></button>
         </section>
         <section class="panel test-panel">
@@ -77,6 +105,7 @@
       </div>
     </section>
   </main>
+  <div id="plan-notice" class="modal-backdrop" hidden><section class="panel plan-confirmation"><h2 data-i18n="chatgpt_plan_title"></h2><p class="test-status" data-i18n="chatgpt_plan_help"></p><button id="plan-got-it" class="primary" data-i18n="chatgpt_got_it"></button></section></div>
   <script>/* SCRIPT */</script>
 </body>
 </html>

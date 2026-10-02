@@ -43,6 +43,23 @@ class PageHandler(NSObject, auto_rename=True):
             host.app.close()
 
     @objc_method
+    def resumeLogin_(self, notification):
+        host = self.host_ref()
+        if host is not None and not host.app.closed.is_set():
+            # Wake the listener even while Safari covers the setup WKWebView.
+            login = host.app.login
+            if login is not None:
+                login.resume()
+
+    @objc_method
+    def safariViewControllerDidFinish_(self, controller):
+        host = self.host_ref()
+        if host is not None and host.safari is not None and controller == host.safari:
+            # Cancel immediately, before a queued UI poll can consume a late token response.
+            host.safari_login.cancel()
+            host.safari = host.safari_login = None
+
+    @objc_method
     def userContentController_didReceiveScriptMessage_(self, controller, message):
         host = self.host_ref()
         if host is not None and not host.app.closed.is_set() and objc_value(message.frameInfo, "isMainFrame"):
@@ -52,6 +69,11 @@ class PageHandler(NSObject, auto_rename=True):
             except (ValueError, TypeError):
                 return
             if isinstance(body, dict) and type(body.get("id")) is int:
+                if body.get("action") == "cancel_login":
+                    payload, login = body.get("payload"), host.app.login
+                    if (isinstance(payload, dict) and payload.get("editor_id") == host.app.login_editor
+                            and login is not None):
+                        login.cancel()
                 host.requests.put(body)
 
 
@@ -60,6 +82,9 @@ class WebSettings:
         self.app = app
         self.requests = queue.Queue()
         self.controller = self.navigation = self.webview = self.handler = None
+        self.safari = self.safari_login = self.shown_login = None
+        self.browser_sync_pending = False
+        self.safari_library = None
 
     def open(self):
         self.controller = ObjCClass("UIViewController").alloc().init()
@@ -68,6 +93,9 @@ class WebSettings:
         configuration.websiteDataStore = objc_value(ObjCClass("WKWebsiteDataStore"), "nonPersistentDataStore")
         self.handler = PageHandler.alloc().init()
         self.handler.host_ref = weakref.ref(self)
+        notifications = objc_value(ObjCClass("NSNotificationCenter"), "defaultCenter")
+        for name in ("UIApplicationWillEnterForegroundNotification", "UIApplicationDidBecomeActiveNotification"):
+            notifications.addObserver_selector_name_object_(self.handler, SEL("resumeLogin:"), name, None)
         close = ObjCClass("UIBarButtonItem").alloc().initWithImage_style_target_action_(
             ObjCClass("UIImage").systemImageNamed_("xmark"), 0, self.handler, SEL("closeTap"))
         close.tintColor = objc_value(ObjCClass("UIColor"), "labelColor")
@@ -89,12 +117,21 @@ class WebSettings:
         try:
             request = self.requests.get(timeout=timeout)
         except queue.Empty:
+            self.app.poll_login()
+            self.schedule_browser_sync()
             return False
         try:
             result = self.app.dispatch(request.get("action"), request.get("payload"))
+            if request.get("action") == "manage_usage":
+                def open_usage():
+                    application = objc_value(ObjCClass("UIApplication"), "sharedApplication")
+                    url = ObjCClass("NSURL").URLWithString_("https://chatgpt.com/settings/usage")
+                    application.openURL_options_completionHandler_(url, {}, None)
+                run_on_ui(open_usage)
             response = {"id": request["id"], "result": result}
         except Exception as error:
             response = {"id": request["id"], "error": self.app.tr.error(error)}
+        self.schedule_browser_sync()
         code = "window.setupBridge.receive(" + json.dumps(response, ensure_ascii=True) + ")"
 
         def reply():
@@ -103,8 +140,51 @@ class WebSettings:
         run_on_ui(reply)
         return True
 
+    def schedule_browser_sync(self):
+        if self.browser_sync_pending:
+            return
+        self.browser_sync_pending = True
+
+        def sync():
+            try:
+                self.sync_browser()
+            finally:
+                self.browser_sync_pending = False
+        run_on_ui(sync)
+
+    def sync_browser(self):
+        login = self.app.login
+        if self.safari is not None:
+            if self.app.closed.is_set() or login is not self.safari_login or login.snapshot()["phase"] in ("success", "error", "cancelled"):
+                self.safari.dismissViewControllerAnimated_completion_(False, None)
+                self.safari = self.safari_login = None
+            return
+        if self.app.closed.is_set() or login is None or login is self.shown_login:
+            return
+        url = login.browser_url()
+        if url is None:
+            return
+        try:
+            application = objc_value(ObjCClass("UIApplication"), "sharedApplication")
+            if objc_value(application, "applicationState") != 0:
+                return
+            self.safari_library = self.safari_library or load_library("SafariServices")
+            controller = ObjCClass("SFSafariViewController").alloc().initWithURL_(ObjCClass("NSURL").URLWithString_(url))
+            controller.delegate = self.handler
+            controller.modalPresentationStyle = 0
+            self.safari, self.safari_login, self.shown_login = controller, login, login
+            presenter().presentViewController_animated_completion_(controller, True, None)
+        except Exception:
+            self.safari = self.safari_login = None
+            login.fail("auth_browser_failed")
+
     def close(self):
         self.app.close()
+        if self.handler is not None:
+            objc_value(ObjCClass("NSNotificationCenter"), "defaultCenter").removeObserver_(self.handler)
+        if self.safari is not None:
+            self.safari.dismissViewControllerAnimated_completion_(False, None)
+            self.safari = self.safari_login = None
         if self.webview is not None:
             self.webview.stopLoading()
             self.webview.configuration.userContentController.removeScriptMessageHandlerForName_("setup")

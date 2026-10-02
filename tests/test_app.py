@@ -34,11 +34,7 @@ class AppTests(unittest.TestCase):
 
     def new(self, backend='apple_fm'):
         self.app.dispatch('new')
-        if backend != 'apple_fm':
-            form = self.form()
-            form['settings']['backend'] = backend
-            self.app.dispatch('backend', form)
-        return self.app.snapshot()
+        return self.app.dispatch('select_provider', {'backend': backend})
 
     def add(self, name='Local Model', backend='apple_fm'):
         self.new(backend)

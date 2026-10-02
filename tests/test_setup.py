@@ -106,6 +106,24 @@ class InstallTests(unittest.TestCase):
                 SettingsStore(path)
             self.assertEqual(path.read_text(), "{broken")
 
+    def test_installation_id_is_saved_atomically_in_the_settings_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "settings.local.json"
+            store = SettingsStore(path)
+            store.save()
+            before = path.read_bytes()
+            with patch("ai_setup.settings.os.replace", side_effect=OSError("Disk full")):
+                with self.assertRaises(OSError):
+                    store.ensure_chatgpt_host_id()
+            self.assertNotIn("chatgpt_host_id", store.data)
+            self.assertEqual(path.read_bytes(), before)
+            host_id = store.ensure_chatgpt_host_id()
+            self.assertTrue(host_id.startswith("urn:uuid:"))
+            self.assertEqual(SettingsStore(path).ensure_chatgpt_host_id(), host_id)
+            self.assertEqual(json.loads(path.read_text())["chatgpt_host_id"], host_id)
+            self.assertEqual(list(path.parent.iterdir()), [path])
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
 
 class BackendTests(unittest.TestCase):
     def setUp(self):

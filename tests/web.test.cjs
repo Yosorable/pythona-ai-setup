@@ -10,6 +10,16 @@ const render = language => execFileSync(process.env.TEST_PYTHON || 'python3', ['
 const waitPage = (page, name) => page.waitForFunction(name => document.documentElement.dataset.page === name
   && !document.getElementById('new').disabled, name);
 
+async function openProvider(page, backend = 'apple_fm') {
+  await page.locator('#new').click();
+  await waitPage(page, 'choose');
+  assert.equal(await page.locator('#detail').isVisible(), false);
+  assert.equal(await page.locator('.provider-choice').count(), 4);
+  await page.locator('#choose-' + backend).click();
+  await waitPage(page, 'new');
+  assert.equal(await page.locator('#backend').count(), 0);
+}
+
 test('home, add, and edit have one commit action; cancel discards drafts and edits', async () => {
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
@@ -20,8 +30,7 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     await waitPage(page, 'home');
     assert.equal(await page.locator('.profile').count(), 0);
     assert.equal(await page.locator('#detail').isVisible(), false);
-    await page.locator('#new').click();
-    await waitPage(page, 'new');
+    await openProvider(page);
     assert.equal(await page.locator('#home').isVisible(), false);
     assert.equal(await page.locator('#detail-title').innerText(), 'Add Provider');
     assert.equal(await page.locator('#back').innerText(), 'Cancel');
@@ -32,8 +41,7 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     await page.locator('#back').click();
     await waitPage(page, 'home');
     assert.equal(await page.locator('.profile').count(), 0);
-    await page.locator('#new').click();
-    await waitPage(page, 'new');
+    await openProvider(page);
     assert.equal(await page.locator('#name').inputValue(), 'Apple On-Device Model');
     await page.locator('#name').fill('');
     await page.locator('#install').click();
@@ -51,7 +59,7 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     assert.equal(await page.locator('#detail-title').innerText(), 'Edit Provider');
     assert.equal(await page.locator('#back').innerText(), 'Back');
     assert.equal(await page.locator('#install > span').first().innerText(), 'Save Changes');
-    assert.equal(await page.locator('#backend').isDisabled(), true);
+    assert.equal(await page.locator('#backend-name').innerText(), 'Apple Foundation Models');
     await page.locator('#name').fill('Discarded edit');
     await page.locator('#back').click();
     await waitPage(page, 'home');
@@ -75,13 +83,10 @@ test('MLX creation tests independently, then edits the installed entry without l
     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
     await page.setContent(render('en'));
     await waitPage(page, 'home');
-    await page.locator('#new').click();
-    await waitPage(page, 'new');
+    await openProvider(page);
     await page.locator('#install').click();
     await waitPage(page, 'home');
-    await page.locator('#new').click();
-    await waitPage(page, 'new');
-    await page.locator('#backend').selectOption('mlx_lm');
+    await openProvider(page, 'mlx_lm');
     await page.waitForFunction(() => !document.getElementById('mlx-settings').hidden && !document.getElementById('test').disabled);
     assert.equal(await page.locator('#model-id').inputValue(), 'mlx-community/Qwen3-1.7B-4bit');
     assert.equal(await page.locator('#name').inputValue(), 'Qwen3-1.7B (MLX)');
@@ -133,10 +138,21 @@ test('home and detail render all app languages and a desktop layout without over
       await waitPage(page, 'home');
       assert.equal(await page.locator('html').getAttribute('lang'), language);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, language);
-      await page.locator('#new').click();
-      await waitPage(page, 'new');
-      await page.locator('#backend').selectOption('mlx_lm');
+      await openProvider(page, 'mlx_lm');
       await page.waitForFunction(() => !document.getElementById('mlx-settings').hidden);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, language);
+      await page.locator('#back').click();
+      await waitPage(page, 'home');
+      await openProvider(page, 'codex');
+      await page.waitForFunction(() => !document.getElementById('codex-settings').hidden);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, language);
+      await page.locator('#back').click();
+      await waitPage(page, 'home');
+      await page.locator('#new').click();
+      await waitPage(page, 'choose');
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, language);
+      await page.locator('#choose-chatgpt').click();
+      await waitPage(page, 'new');
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, language);
     }
     await page.setViewportSize({ width: 1100, height: 850 });
@@ -144,12 +160,142 @@ test('home and detail render all app languages and a desktop layout without over
     await page.goto('about:blank');
     await page.setContent(render('en'));
     await waitPage(page, 'home');
-    await page.locator('#new').click();
-    await waitPage(page, 'new');
+    await openProvider(page);
     const settings = await page.locator('.settings-panel').boundingBox();
     const probe = await page.locator('.test-panel').boundingBox();
     assert.equal(settings.y, probe.y);
     assert.ok(probe.x > settings.x + settings.width);
     await page.screenshot({ path: '/tmp/pythona-ai-setup-pages-desktop.png', fullPage: true });
+  } finally { await browser.close(); }
+});
+
+test('Codex login is a draft, can be cancelled, and commits only through Add or Save', async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setContent(render('en'));
+    await waitPage(page, 'home');
+    await openProvider(page, 'codex');
+    await page.waitForFunction(() => !document.getElementById('codex-settings').hidden && !document.getElementById('login').disabled);
+    assert.equal(await page.locator('#codex-model').inputValue(), 'gpt-6.1-sol');
+    assert.equal(await page.locator('#mlx-settings').isVisible(), false);
+    assert.equal(await page.locator('#tools').isVisible(), false);
+    assert.equal(await page.locator('#tools-help').isVisible(), false);
+    assert.equal(await page.locator('#test').isDisabled(), true);
+    assert.equal(await page.locator('#install').isDisabled(), true);
+    await page.evaluate(() => {
+      const button = document.getElementById('install');
+      button.disabled = false;
+      button.click();
+    });
+    await page.waitForFunction(() => !document.getElementById('error').hidden);
+    assert.match(await page.locator('#error').innerText(), /Sign in with ChatGPT before adding/);
+    assert.equal(await page.locator('.profile').count(), 0);
+    assert.equal(await page.locator('#install').isDisabled(), true);
+    await page.locator('#login').click();
+    await page.waitForFunction(() => document.getElementById('login').textContent === 'Cancel sign-in');
+    assert.equal(await page.locator('#install').isDisabled(), true);
+    await page.locator('#login').click();
+    await page.waitForFunction(() => document.getElementById('auth-status').textContent === 'Sign-in cancelled');
+    await page.waitForTimeout(650);
+    assert.equal(await page.locator('#test').isDisabled(), true);
+    assert.equal(await page.locator('#install').isDisabled(), true);
+    await page.locator('#login').click();
+    await page.waitForFunction(() => !document.getElementById('test').disabled);
+    assert.match(await page.locator('#auth-account').innerText(), /demo@example.test/);
+    assert.equal(await page.locator('.profile').count(), 0);
+    await page.locator('#back').click();
+    await waitPage(page, 'home');
+    assert.equal(await page.locator('.profile').count(), 0);
+    await openProvider(page, 'codex');
+    await page.waitForFunction(() => !document.getElementById('codex-settings').hidden && !document.getElementById('login').disabled);
+    assert.equal(await page.locator('#auth-account').isVisible(), false);
+    await page.locator('#login').click();
+    await page.waitForFunction(() => !document.getElementById('test').disabled);
+    await page.locator('#codex-model').fill('account-model');
+    await page.locator('#reasoning-effort').selectOption('high');
+    await page.locator('#test').click();
+    await page.waitForFunction(() => document.getElementById('reply').textContent.length > 0);
+    assert.equal(await page.locator('.profile').count(), 0);
+    await page.screenshot({ path: '/tmp/pythona-ai-setup-codex.png', fullPage: true });
+    await page.locator('#install').click();
+    await waitPage(page, 'home');
+    assert.match(await page.locator('.profile-detail').innerText(), /Codex · account-model/);
+    await page.locator('.profile').click();
+    await waitPage(page, 'edit');
+    assert.equal(await page.locator('#reasoning-effort').inputValue(), 'high');
+    assert.equal(await page.locator('#codex-model').inputValue(), 'account-model');
+    assert.match(await page.locator('#auth-account').innerText(), /demo@example.test/);
+    assert.equal(await page.locator('#login').innerText(), 'Sign in again');
+    assert.equal(await page.locator('#tools').isVisible(), false);
+    assert.deepEqual(errors, []);
+  } finally { await browser.close(); }
+});
+
+test('provider selection precedes the form, and ChatGPT remains separate from Codex', async () => {
+  const browser = await chromium.launch({ channel: 'chrome', headless: true });
+  try {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true });
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setContent(render('en'));
+    await waitPage(page, 'home');
+    await page.locator('#new').click();
+    await waitPage(page, 'choose');
+    assert.equal(await page.locator('#detail').isVisible(), false);
+    assert.equal(await page.locator('#name').isVisible(), false);
+    assert.equal(await page.locator('.provider-choice').count(), 4);
+    await page.screenshot({ path: '/tmp/pythona-ai-setup-provider-choice.png', fullPage: true });
+    await page.locator('#choose-back').click();
+    await waitPage(page, 'home');
+    assert.equal(await page.locator('.profile').count(), 0);
+    await openProvider(page, 'codex');
+    await page.locator('#login').click();
+    await page.waitForFunction(() => !document.getElementById('install').disabled);
+    await page.locator('#install').click();
+    await waitPage(page, 'home');
+    await openProvider(page, 'chatgpt');
+    assert.equal(await page.locator('#backend-name').innerText(), 'ChatGPT');
+    assert.equal(await page.locator('#cloud-model-label').innerText(), 'ChatGPT model');
+    assert.equal(await page.locator('#tools').isVisible(), false);
+    assert.equal(await page.locator('#test').isDisabled(), true);
+    assert.equal(await page.locator('#install').isDisabled(), true);
+    assert.equal(await page.locator('#login').innerText(), 'Continue with ChatGPT');
+    await page.locator('#login').click();
+    await page.locator('#plan-notice').waitFor({ state: 'visible' });
+    await page.locator('#plan-got-it').click();
+    await page.locator('#plan-notice').waitFor({ state: 'hidden' });
+    assert.equal(await page.locator('#install').isEnabled(), true);
+    assert.equal(await page.locator('#plan-state').innerText(), 'Using ChatGPT plan');
+    assert.equal(await page.locator('#codex-model').getAttribute('list'), 'chatgpt-models');
+    assert.equal(await page.locator('#chatgpt-models option').count(), 1);
+    await page.locator('#codex-model').fill('chatgpt-account-model');
+    await page.locator('#test').click();
+    await page.waitForFunction(() => document.getElementById('reply').textContent.length > 0);
+    assert.equal(await page.locator('.profile').count(), 1);
+    assert.equal(await page.locator('#codex-model').inputValue(), 'chatgpt-account-model');
+    await page.screenshot({ path: '/tmp/pythona-ai-setup-chatgpt.png', fullPage: true });
+    await page.locator('#install').click();
+    await waitPage(page, 'home');
+    assert.equal(await page.locator('.profile').count(), 2);
+    assert.match(await page.locator('.profile-detail').first().innerText(), /^Codex/);
+    assert.match(await page.locator('.profile-detail').nth(1).innerText(), /^ChatGPT · chatgpt-account-model/);
+    await page.locator('.profile').first().click();
+    await waitPage(page, 'edit');
+    assert.equal(await page.locator('#auth-account').isVisible(), true);
+    assert.equal(await page.locator('#install').isEnabled(), true);
+    assert.equal(await page.locator('#chatgpt-usage').isVisible(), false);
+    assert.equal(await page.locator('#codex-model').getAttribute('list'), null);
+    await page.locator('#back').click();
+    await waitPage(page, 'home');
+    await page.locator('.profile').nth(1).click();
+    await waitPage(page, 'edit');
+    assert.match(await page.locator('#auth-account').innerText(), /demo@example.test/);
+    await page.locator('#login').click();
+    await page.waitForFunction(() => !document.getElementById('test').disabled);
+    assert.equal(await page.locator('#plan-notice').isVisible(), false);
+    assert.deepEqual(errors, []);
   } finally { await browser.close(); }
 });
