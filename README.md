@@ -26,7 +26,8 @@ installation prerequisite.
 
 The page follows Pythona's App language, with English as its source and fallback.
 It includes English, Simplified and Traditional Chinese, German, Spanish, French,
-Japanese, Korean, and Russian. Light and dark appearances are supported.
+Japanese, Korean, Brazilian Portuguese, and Russian. Light and dark appearances
+are supported.
 
 ## Use
 

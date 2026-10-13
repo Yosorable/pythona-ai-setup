@@ -132,7 +132,7 @@ test('home and detail render all app languages and a desktop layout without over
   const browser = await chromium.launch({ channel: 'chrome', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
-    for (const language of ['en', 'zh-Hans', 'zh-Hant', 'de', 'es', 'fr', 'ja', 'ko', 'ru']) {
+    for (const language of ['en', 'zh-Hans', 'zh-Hant', 'de', 'es', 'fr', 'ja', 'ko', 'pt-BR', 'ru']) {
       await page.goto('about:blank');
       await page.setContent(render(language));
       await waitPage(page, 'home');

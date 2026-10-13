@@ -175,5 +175,6 @@ class AppTests(unittest.TestCase):
             self.assertNotIn('/* SCRIPT */', page)
             self.assertNotIn('/* STYLES */', page)
             self.assertIn('window.SETUP', page)
+            self.assertIn(f'"language": "{language}"', page)
             self.assertIn('"preview": true', page)
             self.assertNotIn('<script src=', page)

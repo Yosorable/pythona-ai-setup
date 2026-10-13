@@ -9,6 +9,8 @@ STRINGS = json.loads(Path(__file__).with_name("strings.json").read_text(encoding
 
 def resolve_language(language):
     normalized = str(language).replace("_", "-").lower()
+    if normalized in ("pt", "pt-br"):
+        return "pt-BR"
     if normalized.startswith("zh"):
         parts = normalized.split("-")
         if "hans" in parts:
