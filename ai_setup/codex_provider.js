@@ -1,5 +1,4 @@
 // Codex provider maintained by Pythona AI Setup.
-// Initially adapted from Pythona's Codex demo; this repository owns this copy.
 //
 // Usage:
 // 1. Install through Pythona AI Setup, or copy this file into a Custom provider.
@@ -390,7 +389,7 @@ function convertMessagesToResponsesInput(messages) {
   for (const message of messages) {
     if (!message) continue;
     const role = message.role || "user";
-    const content = textFromMessage(message);
+    const content = responsesContentFromMessage(message, role);
 
     if (role === "tool") {
       const callId = message.tool_call_id || "";
@@ -398,7 +397,7 @@ function convertMessagesToResponsesInput(messages) {
         input.push({
           type: "function_call_output",
           call_id: callId,
-          output: typeof content === "string" ? content : JSON.stringify(content)
+          output: content
         });
       }
     } else if (role === "assistant") {
@@ -421,13 +420,20 @@ function convertMessagesToResponsesInput(messages) {
   return input;
 }
 
-function textFromMessage(message) {
-  const content = textFromContent(message.content);
-  if (content !== "" || !Array.isArray(message.parts)) return content;
-  return message.parts
-    .filter(part => part && part.type === "text" && typeof part.text === "string")
-    .map(part => part.text)
-    .join("");
+function responsesContentFromMessage(message, role) {
+  let text = textFromContent(message.content);
+  if (text === "" && Array.isArray(message.parts)) {
+    text = message.parts
+      .filter(part => part && part.type === "text" && typeof part.text === "string")
+      .map(part => part.text)
+      .join("");
+  }
+  if ((role === "user" || role === "tool") && Array.isArray(message.images) && message.images.length) {
+    const blocks = message.images.map(url => ({ type: "input_image", image_url: url }));
+    if (text !== "") blocks.push({ type: "input_text", text });
+    return blocks;
+  }
+  return text;
 }
 
 function toolCallsFromMessage(message) {

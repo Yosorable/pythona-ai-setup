@@ -38,7 +38,7 @@ are supported.
    file tools are enabled by default; browser and Python tools are initially disabled.
    Codex and ChatGPT use all native tools supplied by Pythona, without a separate tool selector.
 3. For MLX-LM, enter a Hugging Face model ID. The default is
-   `mlx-community/Qwen3-1.7B-4bit`, matching Pythona's `llm_demo.py` example.
+   `mlx-community/Qwen3-1.7B-4bit`.
    Its first download is about 1 GB.
    For Codex, choose **Sign in with ChatGPT**, complete authorization in the
    in-app Safari window, and select a model and reasoning effort available to your
@@ -102,9 +102,8 @@ Adding or saving a Codex provider requires a completed sign-in with account cred
 The button stays disabled until authorization succeeds, and installation also
 checks credentials before creating or updating a provider. A model test is optional.
 
-`ai_setup/codex_provider.js` is a repository-owned copy initially adapted from
-Pythona's Codex demo. Setup never reads the App's template. It embeds this project's
-JavaScript with the selected model and reasoning effort. All tools in `ctx.nativeTools`
+`ai_setup/codex_provider.js` contains the complete Codex provider. Setup embeds
+this JavaScript with the selected model and reasoning effort. All tools in `ctx.nativeTools`
 are passed through; hosted web search follows Pythona's web-search preference. The installed
 provider contacts Codex directly, refreshes its own tokens, and preserves Responses
 checkpoints across native tool rounds. It does not start the local model server.
@@ -159,6 +158,25 @@ tool schemas, and tool results to `chatgpt.com`. ChatGPT sign-in contacts
 `auth.openai.com`, and its model discovery and inference contact `api.openai.com`.
 Enabled tools can make their own
 network requests.
+
+## Image input
+
+Turn on **Image Understanding** in Pythona and choose a vision-capable Codex or
+ChatGPT model to send image attachments or inspect workspace files with
+`view_image`. Both providers send these images to their respective cloud endpoints.
+
+Pythona supplies user attachments and tool results in the optional `message.images`
+array as JPEG or PNG data URLs. The caption or tool result text stays in
+`message.content`. The cloud providers send each image as an `input_image` block,
+followed by an `input_text` block when text is present. Images from `view_image`
+travel in the `function_call_output` for the original call ID. Each request uses
+the images and text currently supplied by Pythona, including when replaying history.
+
+The Apple Foundation Models and MLX-LM adapters in this project accept text only
+and exclude `view_image` from their tools. If any message or tool result in the
+current transcript contains an image, the provider reports an error before
+inference. Switch to a provider with image support to continue that conversation,
+or start a new text-only conversation.
 
 ## Sign in with ChatGPT provider
 

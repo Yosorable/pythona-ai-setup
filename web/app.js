@@ -181,6 +181,7 @@
       }
       $("detail-title").textContent = t(state.page === "new" ? "add_provider" : "edit_provider");
       $("back").textContent = t(state.page === "new" ? "cancel" : "back");
+      $("local-text-only").hidden = cloud(state.settings.backend);
       $("mlx-settings").hidden = state.settings.backend !== "mlx_lm";
       $("codex-settings").hidden = !cloud(state.settings.backend);
       $("tools").hidden = $("tools-help").hidden = cloud(state.settings.backend);

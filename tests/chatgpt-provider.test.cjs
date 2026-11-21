@@ -26,8 +26,8 @@ function runtime(fetch, values = storage()) {
 }
 function context(records = [{ index: 0, type: 'message', message: { role: 'user', content: 'Hello' } }]) {
   return { apiVersion: 2, conversationId: 'conversation', provider: { id: 'provider' },
-    instructions: '  Preserve all instructions. 中文 😀  ', preferences: { browserTools: false, webSearch: true },
-    nativeTools: ['read_file', 'write_file', 'browser_open', 'run_python'].map(name =>
+    instructions: '  Preserve all instructions. 中文 😀  ', preferences: { browserTools: false, webSearch: true, imageUnderstanding: true },
+    nativeTools: ['read_file', 'write_file', 'browser_open', 'run_python', 'view_image'].map(name =>
       ({ name, description: name, inputSchema: { type: 'object', properties: {} } })),
     getTranscript: () => ({ records }) };
 }
@@ -116,28 +116,47 @@ test('identity-only grants stop inference and a 401 only retries once', async ()
   assert.equal(refresh, 1);
 });
 
-test('tool round trips retain the namespace, reasoning, and original call without replay', async () => {
+test('view_image round trips retain the namespace, reasoning, and images from the current transcript', async () => {
+  const photo = 'data:image/jpeg;base64,/9j/2Q==';
+  const plot = 'data:image/png;base64,iVBORw0KGgo=';
+  const user = { index: 0, type: 'message', message: { role: 'user', content: 'Compare with plot.png', images: [photo] } };
   const output = [{ type: 'reasoning', id: 'reason', encrypted_content: 'opaque', summary: [] },
-    { type: 'function_call', namespace: 'pythona', call_id: 'read-call', name: 'read_file', arguments: '{"path":"a.py"}' }];
+    { type: 'function_call', namespace: 'pythona', call_id: 'plot-call', name: 'view_image', arguments: '{"path":"plot.png"}' }];
   const events = [];
-  await runtime(async () => response([completed(output)])).stream(context(), event => events.push(plain(event)));
-  assert.equal(events.find(event => event.type === 'native_tool_call_delta' && event.name).name, 'read_file');
+  await runtime(async () => response([completed(output)])).stream(context([user]), event => events.push(plain(event)));
+  assert.equal(events.find(event => event.type === 'native_tool_call_delta' && event.name).name, 'view_image');
   const checkpoint = events.find(event => event.type === 'provider_record');
   assert.match(checkpoint.namespace, /^chatgpt:oaiapp_one:/);
-  const records = [...context().getTranscript().records,
+  assert.ok(!checkpoint.data.includes(photo));
+  const records = [user,
     { index: 1, type: 'message', message: { role: 'assistant', parts: [], tool_calls: [
-      { id: 'read-call', function: { name: 'read_file', arguments: '{"path":"a.py"}' } } ] } },
+      { id: 'plot-call', function: { name: 'view_image', arguments: '{"path":"plot.png"}' } } ] } },
     { index: 2, ...checkpoint },
-    { index: 3, type: 'message', message: { role: 'tool', tool_call_id: 'read-call', name: 'read_file', content: 'result' } }];
+    { index: 3, type: 'message', message: { role: 'tool', tool_call_id: 'plot-call', name: 'view_image', content: 'Image from plot.png', images: [plot] } }];
   let body;
   const next = [];
   await runtime(async (_, options) => { body = JSON.parse(options.body); return response([completed([])]); })
     .stream(context(records), event => next.push(plain(event)));
-  assert.equal(body.input.filter(item => item.type === 'function_call').length, 1);
-  assert.equal(body.input.find(item => item.type === 'function_call').namespace, 'pythona');
-  assert.equal(body.input.filter(item => item.type === 'function_call_output').length, 1);
-  assert.ok(body.input.some(item => item.encrypted_content === 'opaque'));
+  assert.deepEqual(body.input, [
+    { role: 'user', content: [{ type: 'input_image', image_url: photo }, { type: 'input_text', text: user.message.content }] },
+    ...output,
+    { type: 'function_call_output', call_id: 'plot-call', output: [
+      { type: 'input_image', image_url: plot }, { type: 'input_text', text: 'Image from plot.png' }] }
+  ]);
   assert.ok(!next.some(event => event.type.startsWith('native_tool')));
+  const omitted = 'Image omitted by Pythona.';
+  const disabled = context(records.map(record => record.message?.images
+    ? { ...record, message: { ...record.message, images: [], content: record.message.content + '\n' + omitted } }
+    : record));
+  disabled.preferences.imageUnderstanding = false;
+  disabled.nativeTools = disabled.nativeTools.filter(tool => tool.name !== 'view_image');
+  await runtime(async (_, options) => {
+    const request = JSON.parse(options.body);
+    assert.ok(!request.tools[0].tools.some(tool => tool.name === 'view_image'));
+    assert.ok(!options.body.includes('data:image/'));
+    assert.equal(request.input.at(-1).output, 'Image from plot.png\n' + omitted);
+    return response([completed([])]);
+  }).stream(disabled, () => {});
   await runtime(async (_, options) => {
     assert.ok(!JSON.parse(options.body).input.some(item => item.encrypted_content === 'opaque'));
     return response([completed([])]);

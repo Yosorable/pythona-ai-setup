@@ -179,6 +179,10 @@ async function stream(ctx, emit) {
   if (ctx.apiVersion < 2) throw new Error("Custom Provider API v2 is required.");
   const settings = settingsForRun();
   const records = ctx.getTranscript().records;
+  if (records.some(record => record.type === "message" && record.message.images?.length)) {
+    throw new Error("This local provider supports text only. This conversation contains images. "
+      + "Switch to a provider with image support or start a text-only conversation.");
+  }
   const pending = pendingToolRun(records);
   const startup = bootstrapResultThisTurn(records);
   if (startup && startup.tool_failed) throw new Error("Local model service startup failed:\n" + startup.content);

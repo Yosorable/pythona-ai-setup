@@ -12,7 +12,7 @@ const python = process.env.TEST_PYTHON || "python3";
 const script = execFileSync(python, ["-c", "from ai_setup.bundle import build_provider; from ai_setup.settings import defaults, service_defaults, provider_settings; print(build_provider(provider_settings(defaults(), service_defaults())))"],
                             { cwd: project, encoding: "utf8" });
 const schema = name => ({ name, description: name, inputSchema: { type: "object", properties: {} } });
-const tools = ["run_python", "read_file", "write_file", "browser_open", "browser_read_text"].map(schema);
+const tools = ["run_python", "read_file", "write_file", "view_image", "browser_open", "browser_read_text"].map(schema);
 
 function runtime(fetch, groups = { files: false, python: false, browser: false }, overrides = {}) {
   const sandbox = { fetch, AbortController, TextDecoder, TextEncoder, setTimeout, clearTimeout, crypto: webcrypto };
@@ -67,6 +67,51 @@ test("selected groups preserve instructions and decode split Unicode bytes", asy
   assert.deepEqual(body.tools.map(tool => tool.name), ["read_file", "write_file"]);
   assert.equal(body.instructions, context().instructions);
   assert.equal(events[0].delta, "你好 😀");
+});
+
+test("local providers reject current and historical images before contacting the service", async () => {
+  const images = ["data:image/png;base64,iVBORw0KGgo="];
+  const photo = { role: "user", content: "", images };
+  const followUp = { role: "user", content: "Continue", images: [] };
+  const conversations = [
+    [photo],
+    [{ ...photo, content: "Describe this image" }],
+    [photo, { role: "assistant", parts: [{ type: "text", text: "A plot." }] }, followUp],
+    [{ role: "user", content: "Open plot.png" },
+      { role: "assistant", tool_calls: [{ id: "plot", function: { name: "view_image", arguments: '{"path":"plot.png"}' } }] },
+      { role: "tool", name: "view_image", tool_call_id: "plot", content: "Image from plot.png", images }, followUp]
+  ];
+  for (const backend of ["apple_fm", "mlx_lm"]) {
+    let requests = 0;
+    const sandbox = runtime(async () => { requests++; throw new Error("offline"); },
+      { files: true, browser: true, python: true }, { backend, model_id: backend === "mlx_lm" ? "example/model" : "" });
+    for (const messages of conversations) {
+      const records = messages.map((message, index) => ({ type: "message", index, message }));
+      await assert.rejects(sandbox.stream(context(records), () => assert.fail()), /conversation contains images/);
+    }
+    assert.equal(requests, 0);
+  }
+});
+
+test("a text-only view_image failure stays in local history without enabling the tool", async () => {
+  const records = [
+    { role: "user", content: "Open plot.png" },
+    { role: "assistant", tool_calls: [{ id: "plot", function: { name: "view_image", arguments: '{"path":"plot.png"}' } }] },
+    { role: "tool", name: "view_image", tool_call_id: "plot", content: "File not found", tool_failed: true, images: [] },
+    { role: "user", content: "List the files instead" }
+  ].map((message, index) => ({ type: "message", index, message }));
+  let body;
+  const sandbox = runtime(async (url, options) => {
+    if (url.endsWith("/health")) return health(sandbox);
+    body = JSON.parse(options.body);
+    return streamResponse([{ type: "finish", reason: "stop" }]);
+  }, { files: true, browser: true, python: true });
+  const ctx = context(records);
+  ctx.preferences.imageUnderstanding = true;
+  await sandbox.stream(ctx, () => {});
+  assert.ok(!body.tools.some(tool => tool.name === "view_image"));
+  assert.equal(body.messages[1].tool_calls[0].id, "plot");
+  assert.deepEqual(body.messages[2], { role: "tool", name: "view_image", tool_call_id: "plot", content: "File not found", failed: true });
 });
 
 test("keepalives emit no content and never replace a terminal event", async () => {
@@ -178,6 +223,8 @@ test("a new JS context resumes the same SDK run and passes native failure metada
   assert.deepEqual(request, { owner: '["test-provider","test"]', run_id: "same-session",
     result: { id: "read", name: "read_file", content: "Permission denied", failed: true } });
   assert.equal(output.find(event => event.type === "provider_record").data, "null");
+  records[0].message.images = ["data:image/png;base64,iVBORw0KGgo="];
+  await assert.rejects(second.stream(context(records), () => assert.fail()), /conversation contains images/);
 });
 
 test("new user turns start fresh; lost SDK runs never replay tools or bootstrap", async () => {

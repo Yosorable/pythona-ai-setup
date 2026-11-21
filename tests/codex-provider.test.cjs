@@ -70,6 +70,34 @@ test('project-owned model and reasoning use all native tools and preserve instru
   assert.ok(!script.includes('BACKEND_PAYLOAD'));
 });
 
+test('Codex forwards image-only prompts, tool images, and captioned photos in order', async () => {
+  const png = 'data:image/png;base64,iVBORw0KGgo=';
+  const jpeg = 'data:image/jpeg;base64,/9j/2Q==';
+  const records = [
+    { role: 'user', content: '', images: [jpeg] },
+    { role: 'assistant', tool_calls: [{ id: 'chart', function: { name: 'view_image', arguments: '{"path":"chart.png"}' } }] },
+    { role: 'tool', name: 'view_image', tool_call_id: 'chart', content: 'Image from chart.png', images: [png] },
+    { role: 'assistant', parts: [{ type: 'text', text: 'The chart has two lines.' }] },
+    { role: 'user', content: '  Compare these.  ', images: [png, jpeg] }
+  ].map((message, index) => ({ type: 'message', index, message }));
+  const ctx = context(records);
+  ctx.preferences.imageUnderstanding = true;
+  ctx.nativeTools.push({ name: 'view_image', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } });
+  let body;
+  await runtime(async (_, options) => { body = JSON.parse(options.body); return response([completed([])]); })
+    .stream(ctx, () => {});
+  const pngBlock = { type: 'input_image', image_url: png };
+  const jpegBlock = { type: 'input_image', image_url: jpeg };
+  assert.ok(body.tools.some(tool => tool.type === 'function' && tool.name === 'view_image'));
+  assert.deepEqual(body.input, [
+    { role: 'user', content: [jpegBlock] },
+    { type: 'function_call', call_id: 'chart', name: 'view_image', arguments: '{"path":"chart.png"}', status: 'completed' },
+    { type: 'function_call_output', call_id: 'chart', output: [pngBlock, { type: 'input_text', text: 'Image from chart.png' }] },
+    { role: 'assistant', content: 'The chart has two lines.' },
+    { role: 'user', content: [pngBlock, jpegBlock, { type: 'input_text', text: '  Compare these.  ' }] }
+  ]);
+});
+
 test('expired tokens rotate into provider storage and survive a fresh JS context', async () => {
   const values = storage();
   values.set('access_token', jwt({ exp: 1 }));
@@ -124,7 +152,8 @@ test('native tool handoff preserves encrypted reasoning across stateless invocat
   await runtime(async (_, options) => { body = JSON.parse(options.body); return response([completed([])]); })
     .stream(context(records), event => nextEvents.push(plain(event)));
   assert.equal(body.input.filter(item => item.type === 'function_call').length, 1);
-  assert.equal(body.input.filter(item => item.type === 'function_call_output').length, 1);
+  assert.deepEqual(body.input.filter(item => item.type === 'function_call_output'), [
+    { type: 'function_call_output', call_id: 'read-call', output: 'print(1)' }]);
   assert.ok(body.input.some(item => item.encrypted_content === 'opaque-encrypted'));
   assert.ok(!nextEvents.some(event => event.type.startsWith('native_tool')));
 });

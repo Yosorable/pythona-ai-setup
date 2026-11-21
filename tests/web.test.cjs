@@ -18,6 +18,7 @@ async function openProvider(page, backend = 'apple_fm') {
   await page.locator('#choose-' + backend).click();
   await waitPage(page, 'new');
   assert.equal(await page.locator('#backend').count(), 0);
+  assert.equal(await page.locator('#local-text-only').isVisible(), ['apple_fm', 'mlx_lm'].includes(backend));
 }
 
 test('home, add, and edit have one commit action; cancel discards drafts and edits', async () => {
@@ -60,6 +61,10 @@ test('home, add, and edit have one commit action; cancel discards drafts and edi
     assert.equal(await page.locator('#back').innerText(), 'Back');
     assert.equal(await page.locator('#install > span').first().innerText(), 'Save Changes');
     assert.equal(await page.locator('#backend-name').innerText(), 'Apple Foundation Models');
+    const imageHelp = await page.locator('#local-text-only').innerText();
+    assert.match(imageHelp, /local connection currently supports text only/);
+    assert.match(imageHelp, /Codex and ChatGPT.*image attachments.*view_image/);
+    assert.match(imageHelp, /your own JavaScript provider directly in Pythona/);
     await page.locator('#name').fill('Discarded edit');
     await page.locator('#back').click();
     await waitPage(page, 'home');
